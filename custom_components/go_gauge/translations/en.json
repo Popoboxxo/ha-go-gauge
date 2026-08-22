@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Go Gauge HA",
+        "description": "Address of the OpenCode Go monitor (/state JSON endpoint).",
+        "data": {
+          "host": "Host (e.g. 172.20.5.120)",
+          "port": "Port (monitor port, e.g. 8765)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the monitor.",
+      "invalid_payload": "Response does not look like a Go monitor (/state incomplete)."
+    },
+    "abort": {
+      "already_configured": "This monitor is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Go Gauge HA options",
+        "data": {
+          "warn_percent": "Warning threshold (% used)",
+          "scan_interval": "Update interval (seconds)"
+        }
+      }
+    }
+  }
+}
