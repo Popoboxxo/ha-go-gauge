@@ -26,14 +26,16 @@ async def async_setup_entry(
 ) -> None:
     coordinator: GoGaugeCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[BinarySensorEntity] = []
+    ws_name = getattr(coordinator, "ws_name", "") or "WS 1"
     for ws in coordinator.data.get("workspaces", []):
         for win in ("5h", "week", "month"):
             entities.append(RateLimitedBinarySensor(
-                coordinator, entry, ws["key"], ws.get("token_slot"), win))
+                coordinator, entry, ws["key"], win, ws_name))
         # Abo-Status je Workspace (403 EntitlementError -> no_subscription)
         entities.append(SubscriptionActiveBinarySensor(
-            coordinator, entry, ws["key"], ws.get("token_slot")))
-    entities.append(ApiReachableBinarySensor(coordinator, entry))
+            coordinator, entry, ws["key"], ws_name))
+    if getattr(coordinator, "is_catalog_owner", True):
+        entities.append(ApiReachableBinarySensor(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -61,13 +63,13 @@ class RateLimitedBinarySensor(_GoGaugeBinary, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_icon = "mdi:block-helper"
 
-    def __init__(self, coordinator, entry, key: str, slot, win: str) -> None:
+    def __init__(self, coordinator, entry, key: str, win: str, ws_name: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_limited"
         label = WINDOW_LABELS.get(win, win)
-        self._attr_name = f"Go Gauge WS {slot} {label} rate-limited"
+        self._attr_name = f"Go Gauge {ws_name or 'WS 1'} {label} rate-limited"
 
     @property
     def is_on(self) -> bool | None:
@@ -95,11 +97,11 @@ class SubscriptionActiveBinarySensor(_GoGaugeBinary, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_icon = "mdi:shield-check-outline"
 
-    def __init__(self, coordinator, entry, key: str, slot) -> None:
+    def __init__(self, coordinator, entry, key: str, ws_name: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._attr_unique_id = f"{entry.entry_id}_{key}_subscription_active"
-        self._attr_name = f"Go Gauge WS {slot} Abo aktiv"
+        self._attr_name = f"Go Gauge {ws_name or 'WS 1'} Abo aktiv"
 
     @property
     def is_on(self) -> bool | None:

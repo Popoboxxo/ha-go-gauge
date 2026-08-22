@@ -2,10 +2,11 @@
   "config": {
     "step": {
       "user": {
-        "title": "Go Gauge HA einrichten",
-        "description": "OpenCode Go API-Tokens einfügen — einer pro Zeile, einer pro Workspace. Die Tokens werden beim Speichern live geprüft; bei Netzproblemen kannst du die Prüfung überspringen und trotzdem speichern.",
+        "title": "Go Gauge HA — Workspace hinzufügen",
+        "description": "Einen Workspace pro Integration: sprechenden Namen vergeben und den Go-API-Token dieses Workspaces einfügen. Weitere Workspaces = die Integration einfach erneut hinzufügen. Die Tokens werden beim Speichern live geprüft; bei Netzproblemen kannst du die Prüfung überspringen.",
         "data": {
-          "tokens": "API-Tokens (einer pro Zeile)",
+          "workspace_name": "Workspace-Name (z.B. Honcho, App, Default)",
+          "token": "Go-API-Token dieses Workspaces",
           "skip_validation": "Prüfung überspringen (offline speichern)"
         }
       }
@@ -13,10 +14,10 @@
     "error": {
       "cannot_connect": "opencode.ai gerade nicht erreichbar — Prüfung überspringen oder später erneut versuchen.",
       "invalid_token": "Token ungültig (HTTP 401) — bitte prüfen oder 'Prüfung überspringen' aktivieren.",
-      "no_tokens": "Mindestens ein Token erforderlich."
+      "missing_fields": "Bitte Name und Token angeben."
     },
     "abort": {
-      "already_configured": "Diese Token-Kombination ist bereits eingerichtet."
+      "already_configured": "Dieser Token ist bereits eingerichtet."
     }
   },
   "options": {
@@ -24,6 +25,7 @@
       "init": {
         "title": "Go Gauge HA Optionen",
         "data": {
+          "workspace_name": "Workspace-Name",
           "warn_percent": "Warnschwelle in Prozent",
           "auto_update_usage": "Nutzung automatisch aktualisieren",
           "usage_refresh_minutes": "Nutzung: Refresh-Intervall (Minuten)",

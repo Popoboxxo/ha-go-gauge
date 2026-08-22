@@ -33,29 +33,53 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Create entities (fixed set - model list lives in ONE sensor's attributes)."""
+    """Create entities (fixed set - model list lives in ONE sensor's attributes).
+
+    Katalog-Entities (Modelle, Live-Count, Guenstigstes, Free) nur von der
+    ersten Instanz ('_catalog_owner') - weitere Workspace-Instanzen erzeugen
+    KEINE Duplikate. Workspace-Sensoren kommen von jeder Instanz.
+    """
     coordinator: GoGaugeCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[SensorEntity] = []
 
+    ws_name = getattr(coordinator, "ws_name", "") or "WS 1"
+
     for ws in coordinator.data.get("workspaces", []):
         key = ws["key"]
-        slot = ws.get("token_slot", key)
         for win in ("5h", "week", "month"):
             label = WINDOW_LABELS.get(win, win)
-            entities.append(UsagePercentSensor(coordinator, entry, key, slot, win, label))
-            entities.append(ResetTimestampSensor(coordinator, entry, key, slot, win, label))
+            entities.append(UsagePercentSensor(coordinator, entry, key, win, label, ws_name))
+            entities.append(ResetTimestampSensor(coordinator, entry, key, win, label, ws_name))
 
-    # Modell-Katalog: EIN Sensor mit JSON-Attributen (dynamisch)
-    entities.append(ModelCatalogSensor(coordinator, entry))
-    entities.append(LiveModelsCountSensor(coordinator, entry))
-    entities.append(CheapestModelSensor(coordinator, entry))
-    entities.append(FreeModelsSensor(coordinator, entry))
+    if getattr(coordinator, "is_catalog_owner", True):
+        # Modell-Katalog: EIN Sensor mit JSON-Attributen (dynamisch)
+        entities.append(ModelCatalogSensor(coordinator, entry))
+        entities.append(LiveModelsCountSensor(coordinator, entry))
+        entities.append(CheapestModelSensor(coordinator, entry))
+        entities.append(FreeModelsSensor(coordinator, entry))
+        # Settings-Entities ebenfalls NUR vom Owner (sonst Duplikate)
+        try:
+            from .number import (
+                ModelsRefreshMinutesNumber,
+                UsageRefreshMinutesNumber,
+                WarnPercentNumber,
+            )
+            from .switch import AutoUpdateModelsSwitch, AutoUpdateUsageSwitch
+            entities.extend([
+                WarnPercentNumber(coordinator, entry),
+                UsageRefreshMinutesNumber(coordinator, entry),
+                ModelsRefreshMinutesNumber(coordinator, entry),
+                AutoUpdateUsageSwitch(coordinator, entry),
+                AutoUpdateModelsSwitch(coordinator, entry),
+            ])
+        except ImportError:  # pragma: no cover
+            _LOGGER.warning("Go Gauge: Settings-Plattformen nicht ladbar")
 
     async_add_entities(entities)
 
 
-def name_or_slot(slot) -> str:
-    return f"WS {slot}"
+def _display_name(name: str) -> str:
+    return name or "WS 1"
 
 
 class _GoGaugeEntity(CoordinatorEntity):
@@ -87,12 +111,12 @@ class UsagePercentSensor(_GoGaugeEntity, SensorEntity):
     _attr_native_unit_of_measurement = "%"
     _attr_icon = "mdi:speedometer"
 
-    def __init__(self, coordinator, entry, key: str, slot, win: str, label: str) -> None:
+    def __init__(self, coordinator, entry, key: str, ws_name: str, win: str, label: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_percent"
-        self._attr_name = f"Go Gauge {name_or_slot(slot)} {label} Nutzung"
+        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Nutzung"
 
     def _status(self) -> str | None:
         ws = self._ws(self._key)
@@ -141,12 +165,12 @@ class ResetTimestampSensor(_GoGaugeEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:timer-reset"
 
-    def __init__(self, coordinator, entry, key: str, slot, win: str, label: str) -> None:
+    def __init__(self, coordinator, entry, key: str, ws_name: str, win: str, label: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_reset"
-        self._attr_name = f"Go Gauge {name_or_slot(slot)} {label} Reset"
+        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Reset"
 
     @property
     def native_value(self) -> datetime | None:

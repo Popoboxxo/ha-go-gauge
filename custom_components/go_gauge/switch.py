@@ -35,8 +35,9 @@ class AutoUpdateUsageSwitch(GoGaugeEntityBase, SwitchEntity):
 
     def __init__(self, coordinator, entry) -> None:
         super().__init__(coordinator, entry)
+        ws = getattr(coordinator, "ws_name", "") or "WS 1"
         self._attr_unique_id = f"{entry.entry_id}_auto_update_usage"
-        self._attr_name = "Go Gauge Nutzung Auto-Update"
+        self._attr_name = f"Go Gauge {ws} Nutzung Auto-Update"
 
     @property
     def is_on(self) -> bool | None:
@@ -62,8 +63,9 @@ class AutoUpdateModelsSwitch(GoGaugeEntityBase, SwitchEntity):
 
     def __init__(self, coordinator, entry) -> None:
         super().__init__(coordinator, entry)
+        ws = getattr(coordinator, "ws_name", "") or "WS 1"
         self._attr_unique_id = f"{entry.entry_id}_auto_update_models"
-        self._attr_name = "Go Gauge Modelle Auto-Update"
+        self._attr_name = f"Go Gauge {ws} Modelle Auto-Update"
 
     @property
     def is_on(self) -> bool | None:

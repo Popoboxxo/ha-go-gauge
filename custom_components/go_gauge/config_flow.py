@@ -1,4 +1,15 @@
-"""Config flow: token setup (works offline) + refresh-cycle options."""
+"""Config flow: EIN Workspace pro Integration-Instanz (Name + Token).
+
+Design-Entscheidung (Daniel-Feedback 22.08.): Mehrere Workspaces werden
+ueber MEHRERE Instanzen gemanagt - eine pro Workspace, mit sprechendem
+Namen. Der Multi-Token-Textarea-Ansatz war verwirrend und funktionierte
+in der Praxis nicht sauber.
+
+Der Modell-Katalog (workspace-unabhaengig) wird nur von der ERSTEN
+Instanz als Entities angelegt; weitere Instanzen registrieren ihren
+Katalog als 'shared' in hass.data, ohne eigene Katalog-Entities zu
+erzeugen (keine Duplikate mehr).
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -10,13 +21,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
-    CONF_AUTO_UPDATE_MODELS,
-    CONF_AUTO_UPDATE_USAGE,
-    CONF_MODELS_REFRESH_MINUTES,
-    CONF_WARN_PERCENT,
-    CONF_USAGE_REFRESH_MINUTES,
-    DEFAULT_MODELS_REFRESH_MINUTES,
-    DEFAULT_USAGE_REFRESH_MINUTES,
+    CONF_WORKSPACE_NAME,
     DEFAULT_WARN_PERCENT,
     DOMAIN,
     USER_AGENT,
@@ -49,39 +54,45 @@ async def _probe_token(hass, token: str) -> tuple[bool, str | None]:
 
 
 class GoGaugeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Token-Setup. Funktioniert auch, wenn opencode.ai gerade nicht erreichbar ist."""
+    """Ein Workspace = eine Instanz: Name + Token."""
 
-    VERSION = 3
+    VERSION = 4
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         errors: dict[str, str] = {}
-        tokens_raw = (user_input or {}).get("tokens", "")
+        name = (user_input or {}).get("workspace_name", "")
+        token = ((user_input or {}).get("token", "") or "").strip()
         skip_validation = bool((user_input or {}).get("skip_validation", False))
 
         if user_input is not None:
-            tokens = [t.strip() for t in tokens_raw.replace(";", "\n").splitlines() if t.strip()]
-            if not tokens:
-                errors["base"] = "no_tokens"
+            if not name or not token:
+                errors["base"] = "missing_fields"
             else:
                 warn = None
                 if not skip_validation:
-                    ok, err = await _probe_token(self.hass, tokens[0])
+                    ok, err = await _probe_token(self.hass, token)
                     if not ok and err == "invalid_token":
-                        # Eindeutig falscher Token -> nur mit Skip weitermachbar
                         errors["base"] = "invalid_token"
                     elif not ok:
-                        # Netz/Cloudflare-Problem -> Warnung, Speichern erlaubt
-                        warn = "cannot_connect_warn"
+                        warn = "cannot_connect_warn"  # Netz-Problem: Speichern erlaubt
                 if not errors:
-                    await self.async_set_unique_id("opencode_go_" + tokens[0][:8].lower())
+                    # Eindeutige ID pro TOKEN (nicht pro Name) - gleicher Token
+                    # zweimal = echter Duplicate-Fall.
+                    await self.async_set_unique_id(f"go_gauge_{token[:16].lower()}")
                     self._abort_if_unique_id_configured()
-                    title = f"Go Gauge ({len(tokens)} Workspace(s))"
+                    title = f"Go Gauge {name}"
                     if warn:
                         title += " ⚠️ offline gespeichert"
-                    return self.async_create_entry(title=title, data={"tokens": tokens})
+                    return self.async_create_entry(
+                        title=title,
+                        data={"workspace_name": name.strip(), "token": token},
+                    )
 
         schema = vol.Schema({
-            vol.Required("tokens", default=tokens_raw): str,
+            vol.Required("workspace_name",
+                         default=(user_input or {}).get("workspace_name", "")): str,
+            vol.Required("token",
+                         default=(user_input or {}).get("token", "")): str,
             vol.Required("skip_validation", default=False): bool,
         })
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
@@ -93,16 +104,35 @@ class GoGaugeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class GoGaugeOptionsFlowHandler(config_entries.OptionsFlow):
-    """Refresh-Zyklen: Usage + Modelle getrennt, je ein/aus + Minuten."""
+    """Refresh-Zyklen + Warnschwelle + Workspace-Umbenennung."""
 
     def __init__(self, config_entry) -> None:
         self.entry = config_entry
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
+            new_data = {**self.entry.data}
+            if user_input.pop("_rename_workspace", False):
+                pass  # Name kommt aus workspace_name Feld unten
+            if user_input.get("workspace_name"):
+                new_data["workspace_name"] = user_input["workspace_name"].strip()
+            self.hass.config_entries.async_update_entry(self.entry, data=new_data)
+            user_input.pop("workspace_name", None)
             return self.async_create_entry(title="", data=user_input)
+
         opts = self.entry.options
+        from .const import (
+            CONF_AUTO_UPDATE_MODELS,
+            CONF_AUTO_UPDATE_USAGE,
+            CONF_MODELS_REFRESH_MINUTES,
+            CONF_WARN_PERCENT,
+            CONF_USAGE_REFRESH_MINUTES,
+            DEFAULT_MODELS_REFRESH_MINUTES,
+            DEFAULT_USAGE_REFRESH_MINUTES,
+        )
         schema = vol.Schema({
+            vol.Required("workspace_name",
+                         default=self.entry.data.get("workspace_name", "")): str,
             vol.Required(CONF_WARN_PERCENT,
                          default=opts.get(CONF_WARN_PERCENT, DEFAULT_WARN_PERCENT)): int,
             vol.Required(CONF_AUTO_UPDATE_USAGE,

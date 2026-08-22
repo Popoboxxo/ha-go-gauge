@@ -21,6 +21,11 @@ from .entity import GoGaugeEntityBase, persist_options
 _LOGGER = logging.getLogger(__name__)
 
 
+def _with_ws(coordinator, base: str) -> str:
+    ws = getattr(coordinator, "ws_name", "") or "WS 1"
+    return f"{base} · {ws}" if ws else base
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -58,7 +63,7 @@ class WarnPercentNumber(_SettingNumber):
     def __init__(self, coordinator, entry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="warn_percent",
-                         name="Go Gauge Warnschwelle",
+                         name=f"{_with_ws(coordinator, 'Go Gauge Warnschwelle')}",
                          min_value=1, max_value=100)
 
     @property
@@ -80,7 +85,7 @@ class UsageRefreshMinutesNumber(_SettingNumber):
     def __init__(self, coordinator, entry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="usage_refresh_minutes",
-                         name="Go Gauge Nutzung Refresh (Minuten)",
+                         name=f"{_with_ws(coordinator, 'Go Gauge Nutzung Refresh (Minuten)')}",
                          min_value=1, max_value=1440)
 
     @property
@@ -103,7 +108,7 @@ class ModelsRefreshMinutesNumber(_SettingNumber):
     def __init__(self, coordinator, entry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="models_refresh_minutes",
-                         name="Go Gauge Modelle Refresh (Minuten)",
+                         name=f"{_with_ws(coordinator, 'Go Gauge Modelle Refresh (Minuten)')}",
                          min_value=1, max_value=1440)
 
     @property

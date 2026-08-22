@@ -2,10 +2,11 @@
   "config": {
     "step": {
       "user": {
-        "title": "Set up Go Gauge HA",
-        "description": "Paste your OpenCode Go API tokens — one per line, one per workspace. Tokens are validated live on save; if the network is down you can skip validation and save anyway.",
+        "title": "Add Go Gauge HA workspace",
+        "description": "One workspace per integration instance: pick a friendly name and paste that workspace's Go API token. More workspaces = just add the integration again. Tokens are validated live on save; if the network is down you can skip validation.",
         "data": {
-          "tokens": "API tokens (one per line)",
+          "workspace_name": "Workspace name (e.g. Honcho, App, Default)",
+          "token": "This workspace's Go API token",
           "skip_validation": "Skip validation (save offline)"
         }
       }
@@ -13,10 +14,10 @@
     "error": {
       "cannot_connect": "opencode.ai is unreachable right now — skip validation or try again later.",
       "invalid_token": "Invalid token (HTTP 401) — please check or enable 'Skip validation'.",
-      "no_tokens": "At least one token is required."
+      "missing_fields": "Please provide both name and token."
     },
     "abort": {
-      "already_configured": "This token combination is already configured."
+      "already_configured": "This token is already configured."
     }
   },
   "options": {
@@ -24,6 +25,7 @@
       "init": {
         "title": "Go Gauge HA options",
         "data": {
+          "workspace_name": "Workspace name",
           "warn_percent": "Warning threshold (%)",
           "auto_update_usage": "Auto-update usage",
           "usage_refresh_minutes": "Usage refresh interval (minutes)",
