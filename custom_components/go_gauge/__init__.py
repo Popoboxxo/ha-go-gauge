@@ -11,7 +11,7 @@ from .coordinator import GoGaugeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor", "binary_sensor", "button"]
+PLATFORMS = ["sensor", "binary_sensor", "button", "switch", "number"]
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -62,7 +62,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload on options change (refresh cycles etc.)."""
+    """Reload on options change - ABER NICHT wenn nur Runtime-Entities
+    (Switches/Numbers) persistiert haben; die haben den Coordinator schon
+    live umgestellt und der Reload wuerde die Entities kurz killen."""
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is not None and getattr(coordinator, "_skip_reload", False):
+        coordinator._skip_reload = False
+        _LOGGER.debug("Go Gauge: Options-Update aus Runtime-Entity - kein Reload")
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 

@@ -168,6 +168,11 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.auto_models = options.get(CONF_AUTO_UPDATE_MODELS, True)
         self.models_minutes = int(
             options.get(CONF_MODELS_REFRESH_MINUTES, DEFAULT_MODELS_REFRESH_MINUTES))
+        # Warnschwelle als Runtime-Attribut (Number-Entity schreibt sie live)
+        from .const import DEFAULT_WARN_PERCENT  # local import: no cycle at import time
+        self.warn_percent = int(options.get("warn_percent", DEFAULT_WARN_PERCENT))
+        # Flag: Runtime-Entities persistieren Optionen ohne Entry-Reload
+        self._skip_reload = False
 
         # Gesamtintervall: das schnellere aktive Intervall; wenn alles aus ->
         # sehr langer Intervall (nur Button aktualisiert dann wirklich).
@@ -185,6 +190,19 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Zeitstempel der letzten echten Abrufe je Zyklus
         self.last_models_fetch: datetime | None = None
         self.last_usage_fetch: datetime | None = None
+
+    def recalculate_interval(self) -> None:
+        """Intervall nach Auto-Update-Schaltern/Minuten NEU setzen (live)."""
+        intervals = []
+        if self.auto_usage:
+            intervals.append(self.usage_minutes * 60)
+        if self.auto_models:
+            intervals.append(self.models_minutes * 60)
+        effective = min(intervals) if intervals else 86400
+        self.update_interval = timedelta(seconds=effective)
+        _LOGGER.info("Go Gauge: Update-Intervall -> %s s (usage=%s/%smin, models=%s/%smin)",
+                     effective, self.auto_usage, self.usage_minutes,
+                     self.auto_models, self.models_minutes)
 
     async def _async_update_data(self) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
