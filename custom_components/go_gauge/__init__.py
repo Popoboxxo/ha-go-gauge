@@ -70,7 +70,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coordinator = GoGaugeCoordinator(hass, [token] if token else [], dict(entry.options))
     coordinator.ws_name = ws_name
-    await coordinator.async_config_entry_first_refresh()
+    # First refresh TOLERANT: Wenn der erste Abruf fehlschlaegt (Cloudflare/
+    # Netz beim HA-Start), darf das Setup NICHT abbrechen - sonst bleiben alle
+    # Entities "nicht verfuegbar" bis zum naechsten Neustart. HA's Coordinator
+    # retryt automatisch im Hintergrund.
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning(
+            "Go Gauge %s: erster Abruf fehlgeschlagen (%s) - Setup laeuft weiter, "
+            "HA retryt automatisch", ws_name or "WS", err)
+        # data initialisieren, damit Sensoren nicht auf None laufen
+        coordinator.async_set_updated_data({
+            "fetched_at": None,
+            "last_usage_fetch": None,
+            "last_models_fetch": None,
+            "auto_usage": coordinator.auto_usage,
+            "auto_models": coordinator.auto_models,
+            "usage_refresh_minutes": coordinator.usage_minutes,
+            "models_refresh_minutes": coordinator.models_minutes,
+            "workspaces": [],
+            "models_block": None,
+        })
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
