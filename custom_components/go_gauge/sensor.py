@@ -77,7 +77,11 @@ class _GoGaugeEntity(CoordinatorEntity):
 
 
 class UsagePercentSensor(_GoGaugeEntity, SensorEntity):
-    """Percent usage of one workspace window (5h/week/month)."""
+    """Percent usage of one workspace window (5h/week/month).
+
+    Bei 'no_subscription' (kein aktives Abo) zeigt der Sensor den Status
+    direkt als State - nicht 'Unbekannt'.
+    """
 
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "%"
@@ -90,14 +94,31 @@ class UsagePercentSensor(_GoGaugeEntity, SensorEntity):
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_percent"
         self._attr_name = f"Go Gauge {name_or_slot(slot)} {label} Nutzung"
 
-    @property
-    def native_value(self) -> float | None:
+    def _status(self) -> str | None:
         ws = self._ws(self._key)
-        if not ws or ws.get("status") not in ("ok", None):
+        return ws.get("status") if ws else None
+
+    @property
+    def native_value(self) -> float | str | None:
+        ws = self._ws(self._key)
+        if not ws:
             return None
+        status = ws.get("status")
+        if status == "no_subscription":
+            return "Kein Abo"
+        if status == "error":
+            return "Fehler"
         blk = (ws.get("windows") or {}).get(self._win) or {}
         pct = blk.get("percent")
         return float(pct) if isinstance(pct, (int, float)) else None
+
+    @property
+    def icon(self) -> str:
+        """Rot bei Abo-Problem / rate-limit, sonst Tacho."""
+        status = self._status()
+        if status == "no_subscription":
+            return "mdi:shield-off-outline"
+        return "mdi:speedometer"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -107,7 +128,8 @@ class UsagePercentSensor(_GoGaugeEntity, SensorEntity):
             blk = (ws.get("windows") or {}).get(self._win) or {}
             reset = blk.get("resets_at")
             attrs.update({
-                "status": blk.get("status"),
+                "status": ws.get("status"),
+                "note": ws.get("note"),
                 "resets_at_iso": reset.isoformat() if isinstance(reset, datetime) else None,
             })
         return attrs

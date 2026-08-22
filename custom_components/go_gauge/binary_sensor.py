@@ -1,4 +1,4 @@
-"""Go Gauge HA - binary sensors (rate-limit flags, connectivity)."""
+"""Go Gauge HA - binary sensors (rate-limit flags, connectivity, subscription)."""
 from __future__ import annotations
 
 import logging
@@ -30,6 +30,9 @@ async def async_setup_entry(
         for win in ("5h", "week", "month"):
             entities.append(RateLimitedBinarySensor(
                 coordinator, entry, ws["key"], ws.get("token_slot"), win))
+        # Abo-Status je Workspace (403 EntitlementError -> no_subscription)
+        entities.append(SubscriptionActiveBinarySensor(
+            coordinator, entry, ws["key"], ws.get("token_slot")))
     entities.append(ApiReachableBinarySensor(coordinator, entry))
     async_add_entities(entities)
 
@@ -73,6 +76,46 @@ class RateLimitedBinarySensor(_GoGaugeBinary, BinarySensorEntity):
             return None
         blk = (ws.get("windows") or {}).get(self._win) or {}
         return blk.get("status") == "rate-limited"
+
+    @property
+    def available(self) -> bool:
+        """Nicht verfuegbar (unavailable), wenn kein Abo - nicht einfach OFF."""
+        ws = self._ws(self._key)
+        if ws and ws.get("status") == "no_subscription":
+            return False
+        return True
+
+
+class SubscriptionActiveBinarySensor(_GoGaugeBinary, BinarySensorEntity):
+    """ON = Workspace hat ein aktives Abo (API liefert Nutzungsdaten).
+
+    OFF + Attribut 'note' wenn 403 EntitlementError (kein aktives Abo).
+    """
+
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_icon = "mdi:shield-check-outline"
+
+    def __init__(self, coordinator, entry, key: str, slot) -> None:
+        super().__init__(coordinator, entry)
+        self._key = key
+        self._attr_unique_id = f"{entry.entry_id}_{key}_subscription_active"
+        self._attr_name = f"Go Gauge WS {slot} Abo aktiv"
+
+    @property
+    def is_on(self) -> bool | None:
+        ws = self._ws(self._key)
+        if not ws:
+            return None
+        if ws.get("status") == "no_subscription":
+            return False
+        if ws.get("status") == "ok":
+            return True
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        ws = self._ws(self._key)
+        return {"workspace_key": self._key, "note": (ws or {}).get("note")}
 
 
 class ApiReachableBinarySensor(_GoGaugeBinary, BinarySensorEntity):
