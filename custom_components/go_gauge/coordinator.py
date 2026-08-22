@@ -94,15 +94,21 @@ class OpenCodeGoApiClient:
         async with self._session.get(USAGE_URL, headers=headers,
                                      timeout=aiohttp.ClientTimeout(total=30)) as resp:
             if resp.status == 403:
-                # Kein aktives Abo fuer diesen Workspace (EntitlementError) -
-                # gueltiger Token, aber ohne Subscription. Kein harter Fehler.
+                # 403 hat ZWEI Ursachen - sauber trennen:
+                # a) EntitlementError = kein aktives Abo (gueltiger Token)
+                # b) Cloudflare-Rate-Limit/Bot-Score = TRANSIENTER Fehler
                 try:
                     body = await resp.json(content_type=None)
                 except Exception:  # noqa: BLE001
                     body = {}
                 err = (body.get("error") or {})
-                return {"usage": {}, "status": "no_subscription",
-                        "note": err.get("message", "OpenCode Go subscription required.")}
+                if err.get("type") == "EntitlementError":
+                    return {"usage": {}, "status": "no_subscription",
+                            "note": err.get("message", "OpenCode Go subscription required.")}
+                # Kein Entitlement-Fehler -> als Fehler melden (mit Retry sinnvoll)
+                return {"usage": {}, "status": "error",
+                        "note": f"HTTP 403 ({err.get('type') or 'blocked'}) - "
+                                "möglicherweise Rate-Limit"}
             resp.raise_for_status()
             return await resp.json(content_type=None)
 
@@ -208,18 +214,25 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         now = datetime.now(timezone.utc)
 
         # --- Usage-Zyklus -----------------------------------------------------
-        usage = self.data.get("workspaces", []) if self.data else []
+        # WICHTIG: Bei Fehlern NICHT die alten Daten verwerfen (kein Unbekannt!),
+        # sondern letzten Stand behalten und Fehler nur als Attribut melden.
+        prev_ws = {w["key"]: w for w in ((self.data or {}).get("workspaces") or [])}
+        usage = list((self.data or {}).get("workspaces") or [])
         usage_due = (
-            self.auto_usage
+            self._tokens
+            and (self.auto_usage
+                 or not usage  # erster Start: immer laden
+                 or self.last_usage_fetch is None)
             and (self.last_usage_fetch is None
                  or now - self.last_usage_fetch >= timedelta(minutes=self.usage_minutes))
         )
-        if usage_due and self._tokens:
-            session = async_get_clientsession(self.hass)
+        if usage_due:
             fresh = []
             ok_any = False
             for i, token in enumerate(self._tokens, start=1):
-                entry: dict[str, Any] = {"key": f"ws{i}", "token_slot": i,
+                key = f"ws{i}"
+                old = prev_ws.get(key, {})
+                entry: dict[str, Any] = {"key": key, "token_slot": i,
                                          "status": "ok", "windows": {}}
                 try:
                     res = await self._client.fetch_usage(token)
@@ -231,7 +244,6 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             "status": blk.get("status"),
                             "resets_at": _parse_reset(blk.get("resetsAt")),
                         }
-                    # no_subscription / error vom Client durchreichen
                     if res.get("status"):
                         entry["status"] = res["status"]
                     if res.get("note"):
@@ -239,37 +251,60 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if entry["status"] == "ok":
                         ok_any = True
                 except Exception as err:  # noqa: BLE001
-                    entry["status"] = "error"
-                    entry["note"] = str(err)
+                    # TRANSIENTER Fehler (Netz/Cloudflare): LETZTEN STAND BEHALTEN
+                    entry = dict(old) if old else entry
+                    entry["status"] = old.get("status", "error") if old else "error"
+                    entry["note"] = f"letzter Stand vom {(old.get('fetched_at') or 'Start')}: {err}"
+                    _LOGGER.warning("Go Gauge %s: Abruf fehlgeschlagen (%s) - behalte alten Stand",
+                                    key, err)
                 fresh.append(entry)
             usage = fresh
             self.last_usage_fetch = now
-            if not ok_any:
-                # Kein Workspace liefert Daten (alle no_subscription/error) ->
-                # kein harter UpdateFail: Sensoren zeigen den Zustand transparent.
+            for w in usage:
+                w["fetched_at"] = now.isoformat()
+            if not ok_any and all(
+                w.get("status") in ("no_subscription", "error") for w in usage
+            ):
                 _LOGGER.warning(
                     "Go Gauge: kein Workspace mit aktiven Nutzungsdaten "
                     "(alle no_subscription/error)")
 
         # --- Modell-Zyklus ----------------------------------------------------
+        # NUR der Catalog-Owner ruft fetch_models() auf! Bei N Instanzen sonst
+        # N-fache Requests -> Cloudflare-Rate-Limit -> "Modelle spackt".
+        # Nicht-Owner: leeren Katalog melden (ihre Entities existieren eh nicht).
         models_block = (self.data or {}).get("models_block")
-        models_due = (
-            self.auto_models
-            and (models_block is None
-                 or now - (self.last_models_fetch or now) >= timedelta(minutes=self.models_minutes))
-        )
-        if models_block is None and not self.auto_models:
-            # Erster Start mit ausgeschaltetem Auto-Models: einmal laden
-            models_due = True
+        if not getattr(self, "is_catalog_owner", True):
+            models_due = False
+            models_block = models_block or {"model_count_live": 0, "models": [],
+                                            "shared": True}
+        else:
+            models_due = (
+                self.auto_models
+                and (models_block is None
+                     or now - (self.last_models_fetch or now) >= timedelta(minutes=self.models_minutes))
+            )
+            if models_block is None and not self.auto_models:
+                # Erster Start mit ausgeschaltetem Auto-Models: einmal laden
+                models_due = True
         if models_due:
             try:
                 live_ids = await self._client.fetch_models()
                 models_block = build_models_block(live_ids)
                 self.last_models_fetch = now
+                self.models_fetch_errors = 0
             except Exception as err:  # noqa: BLE001
+                self.models_fetch_errors = getattr(self, "models_fetch_errors", 0) + 1
                 if models_block is None:
-                    raise UpdateFailed(f"Modell-Katalog nicht abrufbar: {err}") from err
-                _LOGGER.warning("Modell-Refresh fehlgeschlagen, nutze alten Stand: %s", err)
+                    # Noch nie erfolgreich -> Fehler nur beim ERSTEN Versuch hart,
+                    # danach degradiert weiterlaufen (HA-Default-Retry bleibt aktiv).
+                    if self.models_fetch_errors >= 3:
+                        raise UpdateFailed(
+                            f"Modell-Katalog nicht abrufbar: {err}") from err
+                    _LOGGER.warning("Go Gauge: Modell-Abruf fehlgeschlagen (%s) - "
+                                    "versuche weiter", err)
+                else:
+                    _LOGGER.warning("Modell-Refresh fehlgeschlagen, nutze alten Stand: %s", err)
 
         return {
             "fetched_at": now.isoformat(),
