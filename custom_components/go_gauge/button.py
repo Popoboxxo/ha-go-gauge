@@ -1,4 +1,4 @@
-"""Go Gauge HA - refresh button."""
+"""Go Gauge HA - refresh button (manual update regardless of auto-cycles)."""
 from __future__ import annotations
 
 import logging
@@ -24,11 +24,11 @@ async def async_setup_entry(
 
 
 class RefreshButton(CoordinatorEntity, ButtonEntity):
-    """Trigger an immediate coordinator refresh."""
+    """Erzwingt sofortiges Nachladen BEIDER Zyklen (Usage + Modelle),
+    unabhaengig von den Auto-Update-Schaltern."""
 
     _attr_icon = "mdi:refresh"
     _attr_name = "Go Gauge Aktualisieren"
-    _attr_unique_id: str
 
     def __init__(self, coordinator, entry) -> None:
         super().__init__(coordinator)
@@ -41,4 +41,8 @@ class RefreshButton(CoordinatorEntity, ButtonEntity):
         }
 
     async def async_press(self) -> None:
-        await self.coordinator.async_request_refresh()
+        # Beide Zyklus-Zeitstempel zuruecksetzen => naechster Refresh holt beides
+        coordinator = self.coordinator
+        coordinator.last_usage_fetch = None
+        coordinator.last_models_fetch = None
+        await coordinator.async_request_refresh()

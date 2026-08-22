@@ -17,9 +17,8 @@ PLATFORMS = ["sensor", "binary_sensor", "button"]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Go Gauge from a config entry."""
     tokens: list[str] = list(entry.data.get("tokens", []))
-    scan_interval = entry.options.get("scan_interval", 600)
 
-    coordinator = GoGaugeCoordinator(hass, tokens, scan_interval)
+    coordinator = GoGaugeCoordinator(hass, tokens, dict(entry.options))
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
@@ -30,7 +29,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload on options change."""
+    """Reload on options change (refresh cycles etc.)."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 

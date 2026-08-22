@@ -3,15 +3,16 @@
     "step": {
       "user": {
         "title": "Go Gauge HA einrichten",
-        "description": "OpenCode Go API-Tokens - EINE pro Zeile, einer pro Workspace. Die Integration fragt opencode.ai direkt ab (kein Monitor/Dashboard nötig).",
+        "description": "OpenCode Go API-Tokens einfügen — einer pro Zeile, einer pro Workspace. Die Tokens werden beim Speichern live geprüft; bei Netzproblemen kannst du die Prüfung überspringen und trotzdem speichern.",
         "data": {
-          "tokens": "API-Tokens (einer pro Zeile)"
+          "tokens": "API-Tokens (einer pro Zeile)",
+          "skip_validation": "Prüfung überspringen (offline speichern)"
         }
       }
     },
     "error": {
-      "cannot_connect": "opencode.ai nicht erreichbar.",
-      "invalid_token": "Token ungültig (HTTP 401).",
+      "cannot_connect": "opencode.ai gerade nicht erreichbar — Prüfung überspringen oder später erneut versuchen.",
+      "invalid_token": "Token ungültig (HTTP 401) — bitte prüfen oder 'Prüfung überspringen' aktivieren.",
       "no_tokens": "Mindestens ein Token erforderlich."
     },
     "abort": {
@@ -24,7 +25,10 @@
         "title": "Go Gauge HA Optionen",
         "data": {
           "warn_percent": "Warnschwelle in Prozent",
-          "scan_interval": "Aktualisierungsintervall (Sekunden)"
+          "auto_update_usage": "Nutzung automatisch aktualisieren",
+          "usage_refresh_minutes": "Nutzung: Refresh-Intervall (Minuten)",
+          "auto_update_models": "Modelle automatisch aktualisieren",
+          "models_refresh_minutes": "Modelle: Refresh-Intervall (Minuten)"
         }
       }
     }

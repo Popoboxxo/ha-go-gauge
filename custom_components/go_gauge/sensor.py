@@ -1,6 +1,13 @@
-"""Go Gauge HA - sensor platform (direct API data)."""
+"""Go Gauge HA - sensor platform (direct API data).
+
+Modell-Katalog = EIN Sensor ("Go Gauge Modelle") mit dem kompletten Katalog
+als JSON-Attribute -> dynamisch, neue Modelle erscheinen automatisch ohne
+neue Entitäten. Zusätzlich: Live-Anzahl, Günstigstes, Free-Modelle als
+kompakte Lese-Sensoren.
+"""
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import Any
@@ -26,27 +33,29 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Create entities dynamically from coordinator data."""
+    """Create entities (fixed set - model list lives in ONE sensor's attributes)."""
     coordinator: GoGaugeCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[SensorEntity] = []
 
     for ws in coordinator.data.get("workspaces", []):
         key = ws["key"]
         slot = ws.get("token_slot", key)
-        name = f"Workspace {slot}"
         for win in ("5h", "week", "month"):
             label = WINDOW_LABELS.get(win, win)
             entities.append(UsagePercentSensor(coordinator, entry, key, slot, win, label))
             entities.append(ResetTimestampSensor(coordinator, entry, key, slot, win, label))
 
+    # Modell-Katalog: EIN Sensor mit JSON-Attributen (dynamisch)
+    entities.append(ModelCatalogSensor(coordinator, entry))
+    entities.append(LiveModelsCountSensor(coordinator, entry))
     entities.append(CheapestModelSensor(coordinator, entry))
     entities.append(FreeModelsSensor(coordinator, entry))
-    entities.append(LiveModelsCountSensor(coordinator, entry))
-    for m in coordinator.data.get("models", [])[:40]:
-        if m["ratio"] is not None:
-            entities.append(ModelRatioSensor(coordinator, entry, m["id"]))
 
     async_add_entities(entities)
+
+
+def name_or_slot(slot) -> str:
+    return f"WS {slot}"
 
 
 class _GoGaugeEntity(CoordinatorEntity):
@@ -127,9 +136,59 @@ class ResetTimestampSensor(_GoGaugeEntity, SensorEntity):
         return val if isinstance(val, datetime) else None
 
 
-class LiveModelsCountSensor(_GoGaugeEntity, SensorEntity):
+class ModelCatalogSensor(_GoGaugeEntity, SensorEntity):
+    """EIN Sensor fuer den kompletten Modell-Katalog (dynamisch via Attribute).
+
+    State = Anzahl gelisteter Modelle. Attribute enthaelt das ganze Verzeichnis
+    als JSON-String (`catalog`) plus Aufbereitungen (live/free/cheapest...).
+    Neue Modelle erscheinen hier automatisch beim naechsten Modell-Refresh -
+    ganz ohne neue Entitaeten.
+    """
+
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:format-list-numbered"
+    _attr_icon = "mdi:format-list-bulleted"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_model_catalog"
+        self._attr_name = "Go Gauge Modelle"
+
+    @property
+    def native_value(self) -> int | None:
+        block = self.coordinator.data.get("models_block") or {}
+        models = block.get("models") or []
+        return len(models) if models else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        block = dict(self.coordinator.data.get("models_block") or {})
+        models = block.pop("models", [])
+        attrs: dict[str, Any] = {
+            "models_updated_at": block.get("models_updated_at"),
+            "count": len(models),
+            "live_count": sum(1 for m in models if m.get("live")),
+            "free_models": [m["id"] for m in models if m.get("free")],
+            "cheapest_model": block.get("cheapest_model"),
+            "cheapest_overall": block.get("cheapest_overall"),
+            # Sortiert nach Kosten-Nutzen-Ratio (billigste zuerst)
+            "ranking_by_cost": [
+                {"id": m["id"], "usd_per_1m_mixed": m.get("usd_per_1m_mixed"),
+                 "month_req_per_usd": m.get("month_req_per_usd"), "free": m.get("free")}
+                for m in sorted(
+                    [m for m in models if m.get("usd_per_1m_mixed") is not None],
+                    key=lambda m: m["usd_per_1m_mixed"])
+            ],
+        }
+        # Kompletter Katalog als JSON-String (Templates/LoV-freundlich)
+        attrs["catalog_json"] = json.dumps(models, ensure_ascii=False)
+        return attrs
+
+
+class LiveModelsCountSensor(_GoGaugeEntity, SensorEntity):
+    """Live verfuegbare Modelle laut API."""
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:check-network-outline"
 
     def __init__(self, coordinator, entry) -> None:
         super().__init__(coordinator, entry)
@@ -138,11 +197,12 @@ class LiveModelsCountSensor(_GoGaugeEntity, SensorEntity):
 
     @property
     def native_value(self) -> int | None:
-        return self.coordinator.data.get("model_count_live")
+        block = self.coordinator.data.get("models_block") or {}
+        return block.get("model_count_live")
 
 
 class CheapestModelSensor(_GoGaugeEntity, SensorEntity):
-    """Cheapest paid model by mixed $/1M ratio."""
+    """Guenstigstes bezahltes Modell nach gemischtem $/1M."""
 
     _attr_icon = "mdi:crown-outline"
 
@@ -153,19 +213,15 @@ class CheapestModelSensor(_GoGaugeEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        return self.coordinator.data.get("cheapest_model")
+        return (self.coordinator.data.get("models_block") or {}).get("cheapest_model")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "cheapest_overall": self.coordinator.data.get("cheapest_overall"),
+        block = self.coordinator.data.get("models_block") or {}
+        return {
+            "cheapest_overall": block.get("cheapest_overall"),
+            "ratio_usd_per_1m": block.get("cheapest_ratio"),
         }
-        cheapest = self.coordinator.data.get("cheapest_model")
-        for m in self.coordinator.data.get("models", []):
-            if m["id"] == cheapest and m.get("ratio"):
-                out["usd_per_1m_mixed"] = m["ratio"].get("usd_per_1m_mixed")
-                out["month_req_per_usd"] = m["ratio"].get("month_req_per_usd")
-        return out
 
 
 class FreeModelsSensor(_GoGaugeEntity, SensorEntity):
@@ -178,46 +234,5 @@ class FreeModelsSensor(_GoGaugeEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        free = self.coordinator.data.get("free_models") or []
+        free = (self.coordinator.data.get("models_block") or {}).get("free_models") or []
         return ", ".join(free) if free else None
-
-
-class ModelRatioSensor(_GoGaugeEntity, SensorEntity):
-    """Per-model cost-benefit ratio ($/1M mixed tokens)."""
-
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = "USD/1M"
-    _attr_icon = "mdi:chart-line"
-
-    def __init__(self, coordinator, entry, model_id: str) -> None:
-        super().__init__(coordinator, entry)
-        self._model_id = model_id
-        safe = model_id.replace("-", "_").replace(".", "_").lower()
-        self._attr_unique_id = f"{entry.entry_id}_model_{safe}"
-        self._attr_name = f"Go Gauge Modell {model_id}"
-
-    def _find(self) -> dict[str, Any] | None:
-        for m in self.coordinator.data.get("models", []):
-            if m["id"] == self._model_id:
-                return m
-        return None
-
-    @property
-    def native_value(self) -> float | None:
-        m = self._find()
-        return (m or {}).get("ratio", {}).get("usd_per_1m_mixed") if m else None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        m = self._find() or {}
-        r = m.get("ratio") or {}
-        return {
-            "live": m.get("live"),
-            "free": m.get("free"),
-            "pricing_known": m.get("pricing_known"),
-            "month_req_per_usd": r.get("month_req_per_usd"),
-        }
-
-
-def name_or_slot(slot) -> str:
-    return f"WS {slot}"

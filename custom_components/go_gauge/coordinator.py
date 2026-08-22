@@ -1,17 +1,16 @@
-"""Go Gauge HA - API client talking DIRECTLY to opencode.ai.
+"""Go Gauge HA - Data coordinator talking DIRECTLY to opencode.ai.
 
-No intermediate monitor/dashboard needed. The OpenCode Zen Go API is
-Cloudflare-protected: plain urllib/requests get blocked (HTTP 403 Error 1010),
-but aiohttp WITH full browser headers succeeds (verified 2026-08-22 against
-live endpoints, models + usage both HTTP 200).
+Two independent refresh cycles (both can be switched off in options):
+- Usage  (per workspace tokens): default every 10 min
+- Models (public catalog):       default every 60 min
 
-Secrets rule (Daniel): tokens come ONLY from HA storage (config entry), never
-logged, never in diagnostics output.
+Cloudflare note: plain urllib/requests get blocked (HTTP 403 Error 1010);
+aiohttp WITH full browser headers succeeds (verified live 2026-08-22).
 """
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import aiohttp
@@ -19,7 +18,18 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, PRICING, USER_AGENT
+from .const import (
+    CONF_AUTO_UPDATE_MODELS,
+    CONF_AUTO_UPDATE_USAGE,
+    CONF_MODELS_REFRESH_MINUTES,
+    CONF_USAGE_REFRESH_MINUTES,
+    DEFAULT_MODELS_REFRESH_MINUTES,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_USAGE_REFRESH_MINUTES,
+    DOMAIN,
+    PRICING,
+    USER_AGENT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,7 +57,7 @@ def efficiency(prices: dict[str, Any] | None) -> dict[str, Any] | None:
 
     - usd_per_1m_mixed = 80% input + 20% output
     - month_req_per_usd = official monthly request estimate / 60 USD budget
-    - free models: ratio with usd=0.0 and req_per_usd=None (ranked first!)
+    - free models: usd=0.0, req_per_usd=None (ranked first)
     """
     if prices is None:
         return None
@@ -69,9 +79,8 @@ def efficiency(prices: dict[str, Any] | None) -> dict[str, Any] | None:
 class OpenCodeGoApiClient:
     """Thin async client for the two Zen Go endpoints."""
 
-    def __init__(self, session: aiohttp.ClientSession, tokens: list[str]) -> None:
+    def __init__(self, session: aiohttp.ClientSession) -> None:
         self._session = session
-        self._tokens = tokens
 
     async def fetch_models(self) -> list[str]:
         async with self._session.get(MODELS_URL, headers=BROWSER_HEADERS,
@@ -84,19 +93,18 @@ class OpenCodeGoApiClient:
         headers = {**BROWSER_HEADERS, "Authorization": f"Bearer {token}"}
         async with self._session.get(USAGE_URL, headers=headers,
                                      timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            if resp.status == 403:
+                # Kein aktives Abo fuer diesen Workspace (EntitlementError) -
+                # gueltiger Token, aber ohne Subscription. Kein harter Fehler.
+                try:
+                    body = await resp.json(content_type=None)
+                except Exception:  # noqa: BLE001
+                    body = {}
+                err = (body.get("error") or {})
+                return {"usage": {}, "status": "no_subscription",
+                        "note": err.get("message", "OpenCode Go subscription required.")}
             resp.raise_for_status()
             return await resp.json(content_type=None)
-
-    async def fetch_all_usage(self) -> dict[str, dict[str, Any]]:
-        """One usage call per workspace token (limits are PER WORKSPACE)."""
-        out: dict[str, dict[str, Any]] = {}
-        for i, token in enumerate(self._tokens, start=1):
-            key = f"ws{i}"
-            try:
-                out[key] = {"token_slot": i, **await self.fetch_usage(token)}
-            except Exception as err:  # noqa: BLE001
-                out[key] = {"token_slot": i, "status": "error", "note": str(err)}
-        return out
 
 
 def _parse_reset(resets_at: str | None) -> datetime | None:
@@ -111,64 +119,148 @@ def _parse_reset(resets_at: str | None) -> datetime | None:
         return None
 
 
+def build_models_block(live_ids: list[str] | None) -> dict[str, Any]:
+    """Workspace-independent model catalog (one JSON blob for one sensor)."""
+    known = set(PRICING.keys())
+    models = []
+    for mid in sorted(set(live_ids or []) | known):
+        p = PRICING.get(mid)
+        models.append({
+            "id": mid,
+            "live": mid in (live_ids or []) if live_ids is not None else None,
+            "free": bool(p and p.get("free")),
+            "pricing_known": p is not None,
+            **(efficiency(p) or {}),
+        })
+    ranked = sorted(
+        [m for m in models if m.get("usd_per_1m_mixed") is not None],
+        key=lambda m: m["usd_per_1m_mixed"],
+    )
+    paid_ranked = [m for m in ranked if not m["free"]]
+    return {
+        "model_count_live": len(live_ids or []),
+        "models": models,
+        "cheapest_model": paid_ranked[0]["id"] if paid_ranked else None,
+        "cheapest_overall": ranked[0]["id"] if ranked else None,
+        "cheapest_ratio": (paid_ranked[0].get("usd_per_1m_mixed") if paid_ranked else None),
+        "free_models": [m["id"] for m in models if m["free"]],
+        "models_updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Polls opencode.ai directly (models public + usage per token)."""
+    """Two-cycle coordinator: usage (fast) + models (slow), each toggleable.
+
+    auto_update off => no scheduled polling at all; only the refresh button
+    (or a manual service call) triggers an update.
+    """
 
     def __init__(self, hass: HomeAssistant, tokens: list[str],
-                 scan_interval: int = DEFAULT_SCAN_INTERVAL) -> None:
-        self._client = OpenCodeGoApiClient(async_get_clientsession(hass), tokens)
+                 options: dict[str, Any] | None = None) -> None:
+        self.hass = hass
+        self._tokens = tokens
+        self._client = OpenCodeGoApiClient(async_get_clientsession(hass))
+        options = options or {}
+
+        self.auto_usage = options.get(CONF_AUTO_UPDATE_USAGE, True)
+        self.usage_minutes = int(
+            options.get(CONF_USAGE_REFRESH_MINUTES, DEFAULT_USAGE_REFRESH_MINUTES))
+        self.auto_models = options.get(CONF_AUTO_UPDATE_MODELS, True)
+        self.models_minutes = int(
+            options.get(CONF_MODELS_REFRESH_MINUTES, DEFAULT_MODELS_REFRESH_MINUTES))
+
+        # Gesamtintervall: das schnellere aktive Intervall; wenn alles aus ->
+        # sehr langer Intervall (nur Button aktualisiert dann wirklich).
+        intervals = []
+        if self.auto_usage:
+            intervals.append(self.usage_minutes * 60)
+        if self.auto_models:
+            intervals.append(self.models_minutes * 60)
+        effective = min(intervals) if intervals else 86400  # 24h Fallback
+
         super().__init__(
             hass, _LOGGER, name=DOMAIN,
-            update_interval=__import__("datetime").timedelta(seconds=scan_interval),
+            update_interval=timedelta(seconds=effective or DEFAULT_SCAN_INTERVAL),
         )
+        # Zeitstempel der letzten echten Abrufe je Zyklus
+        self.last_models_fetch: datetime | None = None
+        self.last_usage_fetch: datetime | None = None
 
     async def _async_update_data(self) -> dict[str, Any]:
-        try:
-            live_ids = await self._client.fetch_models()
-        except Exception as err:  # noqa: BLE001
-            raise UpdateFailed(f"OpenCode Go API nicht erreichbar: {err}") from err
+        now = datetime.now(timezone.utc)
 
-        known = set(PRICING.keys())
-        models = []
-        for mid in sorted(set(live_ids or []) | known):
-            p = PRICING.get(mid)
-            models.append({
-                "id": mid,
-                "live": mid in (live_ids or []),
-                "free": bool(p and p.get("free")),
-                "pricing_known": p is not None,
-                "ratio": efficiency(p),
-            })
-
-        usage: dict[str, Any] = {}
-        for key, res in (await self._client.fetch_all_usage()).items():
-            entry: dict[str, Any] = {"key": key, "token_slot": res.get("token_slot"),
-                                     "status": res.get("status", "ok"), "windows": {}}
-            api_usage = res.get("usage") or {}
-            for api_key, win in (("rolling", "5h"), ("weekly", "week"), ("monthly", "month")):
-                blk = api_usage.get(api_key) or {}
-                entry["windows"][win] = {
-                    "percent": blk.get("percent"),
-                    "status": blk.get("status"),
-                    "resets_at": _parse_reset(blk.get("resetsAt")),
-                }
-            usage[key] = entry
-
-        ranked = sorted(
-            [m for m in models if m["ratio"] and m["ratio"]["usd_per_1m_mixed"] is not None],
-            key=lambda m: m["ratio"]["usd_per_1m_mixed"],
+        # --- Usage-Zyklus -----------------------------------------------------
+        usage = self.data.get("workspaces", []) if self.data else []
+        usage_due = (
+            self.auto_usage
+            and (self.last_usage_fetch is None
+                 or now - self.last_usage_fetch >= timedelta(minutes=self.usage_minutes))
         )
-        free_models = [m["id"] for m in models if m["free"]]
-        cheapest_paid = next(
-            (m["id"] for m in ranked if not m["free"]), None)
+        if usage_due and self._tokens:
+            session = async_get_clientsession(self.hass)
+            fresh = []
+            ok_any = False
+            for i, token in enumerate(self._tokens, start=1):
+                entry: dict[str, Any] = {"key": f"ws{i}", "token_slot": i,
+                                         "status": "ok", "windows": {}}
+                try:
+                    res = await self._client.fetch_usage(token)
+                    api = res.get("usage") or {}
+                    for api_key, win in (("rolling", "5h"), ("weekly", "week"), ("monthly", "month")):
+                        blk = api.get(api_key) or {}
+                        entry["windows"][win] = {
+                            "percent": blk.get("percent"),
+                            "status": blk.get("status"),
+                            "resets_at": _parse_reset(blk.get("resetsAt")),
+                        }
+                    # no_subscription / error vom Client durchreichen
+                    if res.get("status"):
+                        entry["status"] = res["status"]
+                    if res.get("note"):
+                        entry["note"] = res["note"]
+                    if entry["status"] == "ok":
+                        ok_any = True
+                except Exception as err:  # noqa: BLE001
+                    entry["status"] = "error"
+                    entry["note"] = str(err)
+                fresh.append(entry)
+            usage = fresh
+            self.last_usage_fetch = now
+            if not ok_any:
+                # Kein Workspace liefert Daten (alle no_subscription/error) ->
+                # kein harter UpdateFail: Sensoren zeigen den Zustand transparent.
+                _LOGGER.warning(
+                    "Go Gauge: kein Workspace mit aktiven Nutzungsdaten "
+                    "(alle no_subscription/error)")
+
+        # --- Modell-Zyklus ----------------------------------------------------
+        models_block = (self.data or {}).get("models_block")
+        models_due = (
+            self.auto_models
+            and (models_block is None
+                 or now - (self.last_models_fetch or now) >= timedelta(minutes=self.models_minutes))
+        )
+        if models_block is None and not self.auto_models:
+            # Erster Start mit ausgeschaltetem Auto-Models: einmal laden
+            models_due = True
+        if models_due:
+            try:
+                live_ids = await self._client.fetch_models()
+                models_block = build_models_block(live_ids)
+                self.last_models_fetch = now
+            except Exception as err:  # noqa: BLE001
+                if models_block is None:
+                    raise UpdateFailed(f"Modell-Katalog nicht abrufbar: {err}") from err
+                _LOGGER.warning("Modell-Refresh fehlgeschlagen, nutze alten Stand: %s", err)
 
         return {
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
-            "model_count_live": len(live_ids or []),
-            "models_live_ok": True,
-            "workspaces": list(usage.values()),
-            "models": models,
-            "cheapest_model": cheapest_paid,
-            "cheapest_overall": ranked[0]["id"] if ranked else None,
-            "free_models": free_models,
+            "fetched_at": now.isoformat(),
+            "last_usage_fetch": self.last_usage_fetch.isoformat() if self.last_usage_fetch else None,
+            "last_models_fetch": self.last_models_fetch.isoformat() if self.last_models_fetch else None,
+            "auto_usage": self.auto_usage,
+            "auto_models": self.auto_models,
+            "usage_refresh_minutes": self.usage_minutes,
+            "models_refresh_minutes": self.models_minutes,
+            "workspaces": usage,
+            "models_block": models_block,
         }
