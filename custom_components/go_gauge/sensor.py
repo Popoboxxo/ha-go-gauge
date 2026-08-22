@@ -1,9 +1,4 @@
-"""Go Gauge HA - sensor platform.
-
-Dynamic entities: one set of sensors per workspace (from /state usage map)
-plus a workspace-independent model catalog block. All percent values,
-concrete reset timestamps and cost figures come straight from the monitor.
-"""
+"""Go Gauge HA - sensor platform (direct API data)."""
 from __future__ import annotations
 
 import logging
@@ -31,33 +26,30 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Go Gauge sensors dynamically from coordinator data."""
+    """Create entities dynamically from coordinator data."""
     coordinator: GoGaugeCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[SensorEntity] = []
 
-    # Workspace sensors (ws1..wsN) x windows + reset timestamps
     for ws in coordinator.data.get("workspaces", []):
+        key = ws["key"]
+        slot = ws.get("token_slot", key)
+        name = f"Workspace {slot}"
         for win in ("5h", "week", "month"):
             label = WINDOW_LABELS.get(win, win)
-            entities.append(UsagePercentSensor(coordinator, entry, ws["key"], ws["name"], win, label))
-            entities.append(ResetTimestampSensor(coordinator, entry, ws["key"], ws["name"], win, label))
-        if ws.get("windows", {}).get("month", {}).get("usd") is not None:
-            entities.append(MonthUsdSensor(coordinator, entry, ws["key"], ws["name"]))
-        entities.append(ModelCountSensor(coordinator, entry))
+            entities.append(UsagePercentSensor(coordinator, entry, key, slot, win, label))
+            entities.append(ResetTimestampSensor(coordinator, entry, key, slot, win, label))
 
-    # Model catalog (workspace-independent)
     entities.append(CheapestModelSensor(coordinator, entry))
     entities.append(FreeModelsSensor(coordinator, entry))
     entities.append(LiveModelsCountSensor(coordinator, entry))
     for m in coordinator.data.get("models", [])[:40]:
-        entities.append(ModelRatioSensor(coordinator, entry, m["id"]))
+        if m["ratio"] is not None:
+            entities.append(ModelRatioSensor(coordinator, entry, m["id"]))
 
     async_add_entities(entities)
 
 
 class _GoGaugeEntity(CoordinatorEntity):
-    """Base entity wiring."""
-
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._entry = entry
@@ -76,41 +68,39 @@ class _GoGaugeEntity(CoordinatorEntity):
 
 
 class UsagePercentSensor(_GoGaugeEntity, SensorEntity):
-    """Percent usage of one workspace window."""
+    """Percent usage of one workspace window (5h/week/month)."""
 
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "%"
     _attr_icon = "mdi:speedometer"
 
-    def __init__(self, coordinator, entry, key: str, name: str, win: str, label: str) -> None:
+    def __init__(self, coordinator, entry, key: str, slot, win: str, label: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_percent"
-        self._attr_name = f"Go Gauge {name} {label} Nutzung"
+        self._attr_name = f"Go Gauge {name_or_slot(slot)} {label} Nutzung"
 
     @property
     def native_value(self) -> float | None:
         ws = self._ws(self._key)
-        if not ws or ws.get("status") != "ok":
+        if not ws or ws.get("status") not in ("ok", None):
             return None
-        blk = ws["windows"].get(self._win) or {}
-        return blk.get("percent")
+        blk = (ws.get("windows") or {}).get(self._win) or {}
+        pct = blk.get("percent")
+        return float(pct) if isinstance(pct, (int, float)) else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         ws = self._ws(self._key)
         attrs: dict[str, Any] = {"workspace_key": self._key, "window": self._win}
-        if ws and ws.get("status") == "ok":
-            blk = ws["windows"].get(self._win) or {}
+        if ws:
+            blk = (ws.get("windows") or {}).get(self._win) or {}
+            reset = blk.get("resets_at")
             attrs.update({
-                "usd": blk.get("usd"),
-                "limit_usd": blk.get("limit_usd"),
                 "status": blk.get("status"),
-                "resets_at_iso": (blk["resets_at"].isoformat() if blk.get("resets_at") else None),
+                "resets_at_iso": reset.isoformat() if isinstance(reset, datetime) else None,
             })
-        else:
-            attrs["status"] = ws.get("status") if ws else "unknown"
         return attrs
 
 
@@ -120,45 +110,24 @@ class ResetTimestampSensor(_GoGaugeEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:timer-reset"
 
-    def __init__(self, coordinator, entry, key: str, name: str, win: str, label: str) -> None:
+    def __init__(self, coordinator, entry, key: str, slot, win: str, label: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_reset"
-        self._attr_name = f"Go Gauge {name} {label} Reset"
+        self._attr_name = f"Go Gauge {name_or_slot(slot)} {label} Reset"
 
     @property
     def native_value(self) -> datetime | None:
         ws = self._ws(self._key)
-        if not ws or ws.get("status") != "ok":
+        if not ws:
             return None
-        return (ws["windows"].get(self._win) or {}).get("resets_at")
+        blk = (ws.get("windows") or {}).get(self._win) or {}
+        val = blk.get("resets_at")
+        return val if isinstance(val, datetime) else None
 
 
-class MonthUsdSensor(_GoGaugeEntity, SensorEntity):
-    """Spent USD this month for one workspace."""
-
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    _attr_native_unit_of_measurement = "USD"
-    _attr_icon = "mdi:cash"
-
-    def __init__(self, coordinator, entry, key: str, name: str) -> None:
-        super().__init__(coordinator, entry)
-        self._key = key
-        self._attr_unique_id = f"{entry.entry_id}_{key}_month_usd"
-        self._attr_name = f"Go Gauge {name} Monat USD"
-
-    @property
-    def native_value(self) -> float | None:
-        ws = self._ws(self._key)
-        if not ws or ws.get("status") != "ok":
-            return None
-        return (ws["windows"].get("month") or {}).get("usd")
-
-
-class ModelCountSensor(_GoGaugeEntity, SensorEntity):
-    """Number of live models in the catalog."""
-
+class LiveModelsCountSensor(_GoGaugeEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:format-list-numbered"
 
@@ -173,7 +142,7 @@ class ModelCountSensor(_GoGaugeEntity, SensorEntity):
 
 
 class CheapestModelSensor(_GoGaugeEntity, SensorEntity):
-    """Cheapest model by mixed $/1M ratio."""
+    """Cheapest paid model by mixed $/1M ratio."""
 
     _attr_icon = "mdi:crown-outline"
 
@@ -188,18 +157,18 @@ class CheapestModelSensor(_GoGaugeEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "cheapest_overall": self.coordinator.data.get("cheapest_overall"),
+        }
         cheapest = self.coordinator.data.get("cheapest_model")
-        out: dict[str, Any] = {}
         for m in self.coordinator.data.get("models", []):
-            if m["id"] == cheapest:
-                out["usd_per_1m_mixed"] = m["usd_per_1m_mixed"]
-                out["month_req_per_usd"] = m["month_req_per_usd"]
+            if m["id"] == cheapest and m.get("ratio"):
+                out["usd_per_1m_mixed"] = m["ratio"].get("usd_per_1m_mixed")
+                out["month_req_per_usd"] = m["ratio"].get("month_req_per_usd")
         return out
 
 
 class FreeModelsSensor(_GoGaugeEntity, SensorEntity):
-    """Comma-separated list of free models (attribute list)."""
-
     _attr_icon = "mdi:gift-outline"
 
     def __init__(self, coordinator, entry) -> None:
@@ -213,12 +182,8 @@ class FreeModelsSensor(_GoGaugeEntity, SensorEntity):
         return ", ".join(free) if free else None
 
 
-class LiveModelsCountSensor(ModelCountSensor):
-    """Alias kept for clarity; count already covers live models."""
-
-
 class ModelRatioSensor(_GoGaugeEntity, SensorEntity):
-    """Per-model cost ratio ($/1M mixed). One entity per model."""
+    """Per-model cost-benefit ratio ($/1M mixed tokens)."""
 
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "USD/1M"
@@ -231,24 +196,28 @@ class ModelRatioSensor(_GoGaugeEntity, SensorEntity):
         self._attr_unique_id = f"{entry.entry_id}_model_{safe}"
         self._attr_name = f"Go Gauge Modell {model_id}"
 
-    @property
-    def native_value(self) -> float | None:
+    def _find(self) -> dict[str, Any] | None:
         for m in self.coordinator.data.get("models", []):
             if m["id"] == self._model_id:
-                return m.get("usd_per_1m_mixed")
+                return m
         return None
 
     @property
+    def native_value(self) -> float | None:
+        m = self._find()
+        return (m or {}).get("ratio", {}).get("usd_per_1m_mixed") if m else None
+
+    @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        for m in self.coordinator.data.get("models", []):
-            if m["id"] == self._model_id:
-                return {
-                    "live": m.get("live"),
-                    "free": m.get("free"),
-                    "pricing_known": m.get("pricing_known"),
-                    "in_usd_1m": m.get("in"),
-                    "out_usd_1m": m.get("out"),
-                    "cache_read_usd_1m": m.get("cache_read"),
-                    "month_req_per_usd": m.get("month_req_per_usd"),
-                }
-        return {}
+        m = self._find() or {}
+        r = m.get("ratio") or {}
+        return {
+            "live": m.get("live"),
+            "free": m.get("free"),
+            "pricing_known": m.get("pricing_known"),
+            "month_req_per_usd": r.get("month_req_per_usd"),
+        }
+
+
+def name_or_slot(slot) -> str:
+    return f"WS {slot}"

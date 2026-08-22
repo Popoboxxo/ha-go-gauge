@@ -1,4 +1,4 @@
-"""Go Gauge HA - binary sensors (rate-limit flags)."""
+"""Go Gauge HA - binary sensors (rate-limit flags, connectivity)."""
 from __future__ import annotations
 
 import logging
@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER, MODEL
+from .const import DOMAIN, MANUFACTURER, MODEL, WINDOW_LABELS
 from .coordinator import GoGaugeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,11 +25,12 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: GoGaugeCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities = []
+    entities: list[BinarySensorEntity] = []
     for ws in coordinator.data.get("workspaces", []):
         for win in ("5h", "week", "month"):
-            entities.append(RateLimitedBinarySensor(coordinator, entry, ws["key"], ws["name"], win))
-        entities.append(ReachableBinarySensor(coordinator, entry))
+            entities.append(RateLimitedBinarySensor(
+                coordinator, entry, ws["key"], ws.get("token_slot"), win))
+    entities.append(ApiReachableBinarySensor(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -52,39 +53,39 @@ class _GoGaugeBinary(CoordinatorEntity):
 
 
 class RateLimitedBinarySensor(_GoGaugeBinary, BinarySensorEntity):
-    """ON when the API reports rate-limited for this workspace window."""
+    """ON when OpenCode reports rate-limited for this workspace window."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_icon = "mdi:block-helper"
 
-    def __init__(self, coordinator, entry, key: str, name: str, win: str) -> None:
+    def __init__(self, coordinator, entry, key: str, slot, win: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_limited"
-        labels = {"5h": "5h rolling", "week": "Weekly", "month": "Monthly"}
-        self._attr_name = f"Go Gauge {name} {labels.get(win, win)} rate-limited"
+        label = WINDOW_LABELS.get(win, win)
+        self._attr_name = f"Go Gauge WS {slot} {label} rate-limited"
 
     @property
     def is_on(self) -> bool | None:
         ws = self._ws(self._key)
-        if not ws or ws.get("status") != "ok":
+        if not ws:
             return None
-        return (ws["windows"].get(self._win) or {}).get("status") == "rate-limited"
+        blk = (ws.get("windows") or {}).get(self._win) or {}
+        return blk.get("status") == "rate-limited"
 
 
-class ReachableBinarySensor(_GoGaugeBinary, BinarySensorEntity):
-    """ON while the monitor is reachable and data is fresh."""
+class ApiReachableBinarySensor(_GoGaugeBinary, BinarySensorEntity):
+    """ON while the opencode.ai API delivers fresh data."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
 
     def __init__(self, coordinator, entry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_monitor_reachable"
-        self._attr_name = "Go Gauge Monitor erreichbar"
+        self._attr_unique_id = f"{entry.entry_id}_api_reachable"
+        self._attr_name = "Go Gauge API erreichbar"
 
     @property
     def is_on(self) -> bool | None:
         return self.coordinator.last_update_success and bool(
-            self.coordinator.data.get("fetched_at")
-        )
+            self.coordinator.data.get("fetched_at"))

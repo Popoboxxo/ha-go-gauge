@@ -3,19 +3,19 @@
     "step": {
       "user": {
         "title": "Set up Go Gauge HA",
-        "description": "Address of the OpenCode Go monitor (/state JSON endpoint).",
+        "description": "OpenCode Go API tokens - one per line, one per workspace. The integration queries opencode.ai directly (no monitor/dashboard needed).",
         "data": {
-          "host": "Host (e.g. 172.20.5.120)",
-          "port": "Port (monitor port, e.g. 8765)"
+          "tokens": "API tokens (one per line)"
         }
       }
     },
     "error": {
-      "cannot_connect": "Could not connect to the monitor.",
-      "invalid_payload": "Response does not look like a Go monitor (/state incomplete)."
+      "cannot_connect": "Could not reach opencode.ai.",
+      "invalid_token": "Invalid token (HTTP 401).",
+      "no_tokens": "At least one token is required."
     },
     "abort": {
-      "already_configured": "This monitor is already configured."
+      "already_configured": "This token combination is already configured."
     }
   },
   "options": {
@@ -23,7 +23,7 @@
       "init": {
         "title": "Go Gauge HA options",
         "data": {
-          "warn_percent": "Warning threshold (% used)",
+          "warn_percent": "Warning threshold (%)",
           "scan_interval": "Update interval (seconds)"
         }
       }

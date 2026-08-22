@@ -1,13 +1,17 @@
-"""Go Gauge HA - Data coordinator.
+"""Go Gauge HA - API client talking DIRECTLY to opencode.ai.
 
-Polls the OpenCode Go Monitor (/state JSON) and normalizes it for the
-entity platform. Everything is derived dynamically from the payload:
-workspaces (ws1..wsN), windows, and the workspace-independent model catalog.
+No intermediate monitor/dashboard needed. The OpenCode Zen Go API is
+Cloudflare-protected: plain urllib/requests get blocked (HTTP 403 Error 1010),
+but aiohttp WITH full browser headers succeeds (verified 2026-08-22 against
+live endpoints, models + usage both HTTP 200).
+
+Secrets rule (Daniel): tokens come ONLY from HA storage (config entry), never
+logged, never in diagnostics output.
 """
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 import aiohttp
@@ -15,107 +19,156 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
+from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, PRICING, USER_AGENT
 
 _LOGGER = logging.getLogger(__name__)
 
-# Cloudflare blocks plain urllib on opencode.ai; the monitor already solved that
-# server-side with curl. We only talk to the monitor over LAN here.
+MODELS_URL = "https://opencode.ai/zen/go/v1/models"
+USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
+
+BROWSER_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "application/json",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://opencode.ai",
+}
+
+
+def _pnum(v: Any) -> float | None:
+    """Peak/off-peak tuple -> mean; scalar -> itself."""
+    if isinstance(v, (tuple, list)) and v:
+        vals = [x for x in v if isinstance(x, (int, float))]
+        return sum(vals) / len(vals) if vals else None
+    return v if isinstance(v, (int, float)) else None
+
+
+def efficiency(prices: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Cost-benefit ratio per model.
+
+    - usd_per_1m_mixed = 80% input + 20% output
+    - month_req_per_usd = official monthly request estimate / 60 USD budget
+    - free models: ratio with usd=0.0 and req_per_usd=None (ranked first!)
+    """
+    if prices is None:
+        return None
+    if prices.get("free"):
+        return {"usd_per_1m_mixed": 0.0, "month_req_per_usd": None, "free": True}
+    try:
+        mixed = 0.8 * _pnum(prices["in"]) + 0.2 * _pnum(prices["out"])
+    except (KeyError, TypeError):
+        mixed = None
+    req_m = (prices.get("req") or [None, None, None])[2]
+    rpd = (req_m / 60.0) if isinstance(req_m, (int, float)) and req_m else None
+    return {
+        "usd_per_1m_mixed": round(mixed, 3) if mixed is not None else None,
+        "month_req_per_usd": round(rpd, 1) if rpd else None,
+        "free": False,
+    }
+
+
+class OpenCodeGoApiClient:
+    """Thin async client for the two Zen Go endpoints."""
+
+    def __init__(self, session: aiohttp.ClientSession, tokens: list[str]) -> None:
+        self._session = session
+        self._tokens = tokens
+
+    async def fetch_models(self) -> list[str]:
+        async with self._session.get(MODELS_URL, headers=BROWSER_HEADERS,
+                                     timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            resp.raise_for_status()
+            data = await resp.json(content_type=None)
+        return [m.get("id") for m in data.get("data", []) if m.get("id")]
+
+    async def fetch_usage(self, token: str) -> dict[str, Any]:
+        headers = {**BROWSER_HEADERS, "Authorization": f"Bearer {token}"}
+        async with self._session.get(USAGE_URL, headers=headers,
+                                     timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            resp.raise_for_status()
+            return await resp.json(content_type=None)
+
+    async def fetch_all_usage(self) -> dict[str, dict[str, Any]]:
+        """One usage call per workspace token (limits are PER WORKSPACE)."""
+        out: dict[str, dict[str, Any]] = {}
+        for i, token in enumerate(self._tokens, start=1):
+            key = f"ws{i}"
+            try:
+                out[key] = {"token_slot": i, **await self.fetch_usage(token)}
+            except Exception as err:  # noqa: BLE001
+                out[key] = {"token_slot": i, "status": "error", "note": str(err)}
+        return out
+
+
+def _parse_reset(resets_at: str | None) -> datetime | None:
+    if not resets_at:
+        return None
+    try:
+        dt = datetime.fromisoformat(resets_at.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except ValueError:
+        return None
 
 
 class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Fetch /state from the monitor and expose normalized data."""
+    """Polls opencode.ai directly (models public + usage per token)."""
 
-    def __init__(self, hass: HomeAssistant, host: str, port: int,
+    def __init__(self, hass: HomeAssistant, tokens: list[str],
                  scan_interval: int = DEFAULT_SCAN_INTERVAL) -> None:
-        self._base = f"http://{host}:{port}"
+        self._client = OpenCodeGoApiClient(async_get_clientsession(hass), tokens)
         super().__init__(
-            hass,
-            _LOGGER,
-            name=DOMAIN,
-            update_interval=timedelta(seconds=scan_interval),
+            hass, _LOGGER, name=DOMAIN,
+            update_interval=__import__("datetime").timedelta(seconds=scan_interval),
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
-        session = async_get_clientsession(self.hass)
         try:
-            async with session.get(
-                f"{self._base}/state", timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                resp.raise_for_status()
-                raw = await resp.json(content_type=None)
+            live_ids = await self._client.fetch_models()
         except Exception as err:  # noqa: BLE001
-            raise UpdateFailed(f"Monitor nicht erreichbar ({self._base}): {err}") from err
+            raise UpdateFailed(f"OpenCode Go API nicht erreichbar: {err}") from err
 
-        return self._normalize(raw)
-
-    # -- normalization -------------------------------------------------------
-
-    @staticmethod
-    def _parse_reset(resets_at: str | None) -> datetime | None:
-        """ISO string -> aware datetime (HA timestamp sensors need UTC)."""
-        if not resets_at:
-            return None
-        try:
-            dt = datetime.fromisoformat(resets_at.replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc)
-        except ValueError:
-            return None
-
-    def _normalize(self, raw: dict[str, Any]) -> dict[str, Any]:
-        workspaces: list[dict[str, Any]] = []
-        for key, ws in (raw.get("usage") or {}).items():
-            entry = {
-                "key": key,
-                "name": ws.get("name") or key,
-                "slot": ws.get("slot"),
-                "id": ws.get("id"),
-                "status": ws.get("status"),
-                "windows": {},
-            }
-            if ws.get("status") == "ok":
-                for win, blk in (ws.get("windows") or {}).items():
-                    pct = blk.get("percent")
-                    entry["windows"][win] = {
-                        "percent": float(pct) if isinstance(pct, (int, float)) else None,
-                        "usd": blk.get("usd"),
-                        "limit_usd": blk.get("limit_usd"),
-                        "resets_at": self._parse_reset(blk.get("resets_at")),
-                        "status": blk.get("status"),
-                    }
-            workspaces.append(entry)
-
-        models: list[dict[str, Any]] = []
-        for m in raw.get("models") or []:
-            ratio = m.get("ratio") or {}
-            prices = m.get("prices") or {}
+        known = set(PRICING.keys())
+        models = []
+        for mid in sorted(set(live_ids or []) | known):
+            p = PRICING.get(mid)
             models.append({
-                "id": m.get("id"),
-                "live": m.get("live"),
-                "free": bool(prices.get("free")),
-                "pricing_known": m.get("pricing_known", False),
-                "usd_per_1m_mixed": ratio.get("usd_per_1m_mixed"),
-                "month_req_per_usd": ratio.get("month_req_per_usd"),
-                "in": prices.get("in"),
-                "out": prices.get("out"),
-                "cache_read": prices.get("cr"),
+                "id": mid,
+                "live": mid in (live_ids or []),
+                "free": bool(p and p.get("free")),
+                "pricing_known": p is not None,
+                "ratio": efficiency(p),
             })
 
+        usage: dict[str, Any] = {}
+        for key, res in (await self._client.fetch_all_usage()).items():
+            entry: dict[str, Any] = {"key": key, "token_slot": res.get("token_slot"),
+                                     "status": res.get("status", "ok"), "windows": {}}
+            api_usage = res.get("usage") or {}
+            for api_key, win in (("rolling", "5h"), ("weekly", "week"), ("monthly", "month")):
+                blk = api_usage.get(api_key) or {}
+                entry["windows"][win] = {
+                    "percent": blk.get("percent"),
+                    "status": blk.get("status"),
+                    "resets_at": _parse_reset(blk.get("resetsAt")),
+                }
+            usage[key] = entry
+
         ranked = sorted(
-            [m for m in models if m["usd_per_1m_mixed"] is not None],
-            key=lambda m: m["usd_per_1m_mixed"],
+            [m for m in models if m["ratio"] and m["ratio"]["usd_per_1m_mixed"] is not None],
+            key=lambda m: m["ratio"]["usd_per_1m_mixed"],
         )
-        cheapest = ranked[0]["id"] if ranked else None
         free_models = [m["id"] for m in models if m["free"]]
+        cheapest_paid = next(
+            (m["id"] for m in ranked if not m["free"]), None)
 
         return {
-            "fetched_at": raw.get("fetched_at"),
-            "model_count_live": raw.get("model_count_live"),
-            "models_live_ok": raw.get("models_live_ok"),
-            "workspaces": workspaces,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "model_count_live": len(live_ids or []),
+            "models_live_ok": True,
+            "workspaces": list(usage.values()),
             "models": models,
-            "cheapest_model": cheapest,
+            "cheapest_model": cheapest_paid,
+            "cheapest_overall": ranked[0]["id"] if ranked else None,
             "free_models": free_models,
         }

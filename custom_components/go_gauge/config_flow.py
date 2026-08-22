@@ -1,4 +1,4 @@
-"""Config flow to set up Go Gauge HA via the UI."""
+"""Config flow: Go Gauge talks DIRECTLY to opencode.ai - only tokens needed."""
 from __future__ import annotations
 
 from typing import Any
@@ -8,59 +8,71 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
-    CONF_HOST,
-    CONF_PORT,
     CONF_WARN_PERCENT,
-    DEFAULT_HOST,
-    DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_WARN_PERCENT,
     DOMAIN,
+    USER_AGENT,
 )
 
+MODELS_URL = "https://opencode.ai/zen/go/v1/models"
+USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
 
-async def _validate(host: str, port: int) -> tuple[bool, str | None]:
-    """Check that a Go monitor answers on /state with the expected shape."""
+
+async def _validate_token(hass, token: str) -> tuple[bool, str | None]:
+    """A token is valid when /usage answers 200 with a usage block."""
+    session = async_get_clientsession(hass)
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json",
+        "Origin": "https://opencode.ai",
+        "Authorization": f"Bearer {token}",
+    }
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"http://{host}:{port}/state",
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json(content_type=None)
-        if "usage" not in data or "models" not in data:
-            return False, "invalid_payload"
-        return True, None
+        async with session.get(USAGE_URL, headers=headers,
+                               timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            if resp.status == 401:
+                return False, "invalid_token"
+            resp.raise_for_status()
+            data = await resp.json(content_type=None)
+            if "usage" not in data:
+                return False, "invalid_token"
+            return True, None
     except Exception:  # noqa: BLE001
         return False, "cannot_connect"
 
 
 class GoGaugeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle the initial setup."""
+    """Token-based setup (direct API access, no monitor needed)."""
 
-    VERSION = 1
+    VERSION = 2
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            host = user_input[CONF_HOST].strip()
-            port = int(user_input[CONF_PORT])
-            ok, err = await _validate(host, port)
-            if ok:
-                await self.async_set_unique_id(f"{host}:{port}")
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=f"Go Gauge ({host}:{port})",
-                    data={CONF_HOST: host, CONF_PORT: port},
-                )
-            errors["base"] = err or "cannot_connect"
+            # Tokens: eine pro Zeile; Leerzeilen/Whitespace ignorieren
+            raw = user_input.get("tokens", "") or ""
+            tokens = [t.strip() for t in raw.replace(";", "\n").splitlines() if t.strip()]
+            if not tokens:
+                errors["base"] = "no_tokens"
+            else:
+                # Ersten Token validieren (alle kommen vom selben Account)
+                ok, err = await _validate_token(self.hass, tokens[0])
+                if ok:
+                    await self.async_set_unique_id(
+                        "opencode_go_" + tokens[0][:8].lower())
+                    self._abort_if_unique_id_configured()
+                    return self.async_create_entry(
+                        title=f"Go Gauge ({len(tokens)} Workspace(s))",
+                        data={"tokens": tokens},
+                    )
+                errors["base"] = err or "invalid_token"
 
         schema = vol.Schema({
-            vol.Required(CONF_HOST, default=DEFAULT_HOST): str,
-            vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
+            vol.Required("tokens", default=user_input.get("tokens", "") if user_input else ""): str,
         })
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
@@ -80,13 +92,9 @@ class GoGaugeOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
         schema = vol.Schema({
-            vol.Required(
-                CONF_WARN_PERCENT,
-                default=self.entry.options.get(CONF_WARN_PERCENT, DEFAULT_WARN_PERCENT),
-            ): int,
-            vol.Required(
-                "scan_interval",
-                default=self.entry.options.get("scan_interval", DEFAULT_SCAN_INTERVAL),
-            ): int,
+            vol.Required(CONF_WARN_PERCENT,
+                         default=self.entry.options.get(CONF_WARN_PERCENT, DEFAULT_WARN_PERCENT)): int,
+            vol.Required("scan_interval",
+                         default=self.entry.options.get("scan_interval", DEFAULT_SCAN_INTERVAL)): int,
         })
         return self.async_show_form(step_id="init", data_schema=schema)

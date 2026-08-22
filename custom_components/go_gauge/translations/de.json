@@ -3,19 +3,19 @@
     "step": {
       "user": {
         "title": "Go Gauge HA einrichten",
-        "description": "Adresse des OpenCode-Go-Monitors (/state JSON).",
+        "description": "OpenCode Go API-Tokens - EINE pro Zeile, einer pro Workspace. Die Integration fragt opencode.ai direkt ab (kein Monitor/Dashboard nötig).",
         "data": {
-          "host": "Host (z.B. 172.20.5.120)",
-          "port": "Port (Monitor-Port, z.B. 8765)"
+          "tokens": "API-Tokens (einer pro Zeile)"
         }
       }
     },
     "error": {
-      "cannot_connect": "Verbindung zum Monitor fehlgeschlagen.",
-      "invalid_payload": "Antwort sieht nicht nach einem Go-Monitor aus (/state unvollständig)."
+      "cannot_connect": "opencode.ai nicht erreichbar.",
+      "invalid_token": "Token ungültig (HTTP 401).",
+      "no_tokens": "Mindestens ein Token erforderlich."
     },
     "abort": {
-      "already_configured": "Dieser Monitor ist bereits eingerichtet."
+      "already_configured": "Diese Token-Kombination ist bereits eingerichtet."
     }
   },
   "options": {
