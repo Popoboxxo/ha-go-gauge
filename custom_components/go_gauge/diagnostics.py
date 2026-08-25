@@ -15,6 +15,7 @@ from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.loader import async_get_integration
 
 from .const import DOMAIN
 
@@ -34,6 +35,8 @@ async def async_get_config_entry_diagnostics(
                      "Log pruefen: 'Go Gauge' filtern.",
             "entry_state": str(entry.state),
         }
+
+    integration = await async_get_integration(hass, DOMAIN)
 
     data = coordinator.data or {}
     token = str(entry.data.get("token") or "")
@@ -73,7 +76,7 @@ async def async_get_config_entry_diagnostics(
                          "Intervall erhoehen.")
 
     return {
-        "integration_version": "0.6.0",
+        "integration_version": integration.version,
         "config_entry_version": entry.version,
         "entry_state": str(entry.state),
         "token_fingerprint": token_fp,

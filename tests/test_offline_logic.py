@@ -7,6 +7,7 @@ import json
 import logging
 import sys
 import types
+from pathlib import Path
 
 
 class _Flexible(types.ModuleType):
@@ -46,7 +47,8 @@ sys.modules["homeassistant.components.sensor"] = _Flexible("sensor")
 sys.modules["homeassistant.components.sensor"].SensorStateClass = _enum_like("measurement")
 sys.modules["homeassistant.components.sensor"].SensorDeviceClass = _enum_like("timestamp")
 
-BASE = "/opt/data/ha-go-gauge/custom_components/go_gauge"
+BASE = str(Path(__file__).resolve().parent.parent / "custom_components" / "go_gauge")
+ENV_FILE = Path("/opt/data/opencode-go-monitor/.env")
 
 
 def load(name, path):
@@ -63,7 +65,7 @@ coord = load("go_gauge.coordinator", f"{BASE}/coordinator.py")
 
 async def main():
     tokens = []
-    for line in open("/opt/data/opencode-go-monitor/.env"):
+    for line in ENV_FILE.open():
         if line.startswith("OPENCODE_WS_") and "_TOKEN=" in line:
             tokens.append(line.split("=", 1)[1].strip())
 
@@ -110,6 +112,7 @@ async def main():
             self.coordinator = coordinator
 
     uc.CoordinatorEntity = _EntityBase
+    load("go_gauge.entity", f"{BASE}/entity.py")
     sensor = load("go_gauge.sensor", f"{BASE}/sensor.py")
     fc = FakeCoord()
 
@@ -122,13 +125,13 @@ async def main():
     assert cat.native_value == len(catalog)
 
     pct = sensor.UsagePercentSensor(fc, types.SimpleNamespace(entry_id="test"),
-                                    "ws3", 3, "month", "Monat")
+                                    key="ws3", win="month", label="Monat", ws_name="3")
     pct.coordinator = fc
     print(f"UsagePercent ws3/month -> {pct.native_value}% "
           f"| reset_iso={pct.extra_state_attributes.get('resets_at_iso')}")
 
     rst = sensor.ResetTimestampSensor(fc, types.SimpleNamespace(entry_id="test"),
-                                      "ws2", 2, "month", "Monat")
+                                      key="ws2", win="month", label="Monat", ws_name="2")
     rst.coordinator = fc
     print(f"ResetTimestamp ws2/month -> {rst.native_value}")
 
@@ -147,4 +150,10 @@ async def main():
     print("ALLE v0.3.1 TESTS BESTANDEN")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    # Live-Smoke-Test gegen die echte opencode.ai API - braucht echte Tokens
+    # in ENV_FILE, daher kein pytest-Test (pytest sammelt diese Datei ein,
+    # fuehrt aber ohne test_*-Funktionen nichts davon aus).
+    if not ENV_FILE.exists():
+        raise SystemExit(f"Live-Smoke-Test uebersprungen: {ENV_FILE} fehlt")
+    asyncio.run(main())
