@@ -11,10 +11,10 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER, MODEL, WINDOW_LABELS
+from .const import DOMAIN, WINDOW_LABELS
 from .coordinator import GoGaugeCoordinator
+from .entity import GoGaugeEntityBase
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,40 +30,22 @@ async def async_setup_entry(
     for ws in coordinator.data.get("workspaces", []):
         for win in ("5h", "week", "month"):
             entities.append(RateLimitedBinarySensor(
-                coordinator, entry, ws["key"], win, ws_name))
+                coordinator, entry, key=ws["key"], win=win, ws_name=ws_name))
         # Abo-Status je Workspace (403 EntitlementError -> no_subscription)
         entities.append(SubscriptionActiveBinarySensor(
-            coordinator, entry, ws["key"], ws_name))
+            coordinator, entry, key=ws["key"], ws_name=ws_name))
     if getattr(coordinator, "is_catalog_owner", True):
         entities.append(ApiReachableBinarySensor(coordinator, entry))
     async_add_entities(entities)
 
 
-class _GoGaugeBinary(CoordinatorEntity):
-    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-            "name": "Go Gauge HA",
-            "manufacturer": MANUFACTURER,
-            "model": MODEL,
-        }
-
-    def _ws(self, key: str) -> dict[str, Any] | None:
-        for ws in self.coordinator.data.get("workspaces", []):
-            if ws["key"] == key:
-                return ws
-        return None
-
-
-class RateLimitedBinarySensor(_GoGaugeBinary, BinarySensorEntity):
+class RateLimitedBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
     """ON when OpenCode reports rate-limited for this workspace window."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_icon = "mdi:block-helper"
 
-    def __init__(self, coordinator, entry, key: str, win: str, ws_name: str) -> None:
+    def __init__(self, coordinator, entry, *, key: str, win: str, ws_name: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
@@ -88,7 +70,7 @@ class RateLimitedBinarySensor(_GoGaugeBinary, BinarySensorEntity):
         return True
 
 
-class SubscriptionActiveBinarySensor(_GoGaugeBinary, BinarySensorEntity):
+class SubscriptionActiveBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
     """ON = Workspace hat ein aktives Abo (API liefert Nutzungsdaten).
 
     OFF + Attribut 'note' wenn 403 EntitlementError (kein aktives Abo).
@@ -97,7 +79,7 @@ class SubscriptionActiveBinarySensor(_GoGaugeBinary, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_icon = "mdi:shield-check-outline"
 
-    def __init__(self, coordinator, entry, key: str, ws_name: str) -> None:
+    def __init__(self, coordinator, entry, *, key: str, ws_name: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._attr_unique_id = f"{entry.entry_id}_{key}_subscription_active"
@@ -120,7 +102,7 @@ class SubscriptionActiveBinarySensor(_GoGaugeBinary, BinarySensorEntity):
         return {"workspace_key": self._key, "note": (ws or {}).get("note")}
 
 
-class ApiReachableBinarySensor(_GoGaugeBinary, BinarySensorEntity):
+class ApiReachableBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
     """ON while the opencode.ai API delivers fresh data."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY

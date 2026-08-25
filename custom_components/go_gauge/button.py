@@ -7,9 +7,9 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER, MODEL
+from .const import DOMAIN
+from .entity import GoGaugeEntityBase
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ async def async_setup_entry(
     async_add_entities([RefreshButton(coordinator, entry)])
 
 
-class RefreshButton(CoordinatorEntity, ButtonEntity):
+class RefreshButton(GoGaugeEntityBase, ButtonEntity):
     """Erzwingt sofortiges Nachladen BEIDER Zyklen (Usage + Modelle),
     unabhaengig von den Auto-Update-Schaltern."""
 
@@ -31,14 +31,8 @@ class RefreshButton(CoordinatorEntity, ButtonEntity):
     _attr_name = "Go Gauge Aktualisieren"
 
     def __init__(self, coordinator, entry) -> None:
-        super().__init__(coordinator)
+        super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_refresh"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-            "name": "Go Gauge HA",
-            "manufacturer": MANUFACTURER,
-            "model": MODEL,
-        }
 
     async def async_press(self) -> None:
         # Beide Zyklus-Zeitstempel zuruecksetzen => naechster Refresh holt beides

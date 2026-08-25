@@ -20,10 +20,10 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER, MODEL, WINDOW_LABELS
+from .const import DOMAIN, WINDOW_LABELS
 from .coordinator import GoGaugeCoordinator
+from .entity import GoGaugeEntityBase
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,8 +48,10 @@ async def async_setup_entry(
         key = ws["key"]
         for win in ("5h", "week", "month"):
             label = WINDOW_LABELS.get(win, win)
-            entities.append(UsagePercentSensor(coordinator, entry, key, win, label, ws_name))
-            entities.append(ResetTimestampSensor(coordinator, entry, key, win, label, ws_name))
+            entities.append(UsagePercentSensor(
+                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
+            entities.append(ResetTimestampSensor(
+                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
 
     if getattr(coordinator, "is_catalog_owner", True):
         # Modell-Katalog: EIN Sensor mit JSON-Attributen (dynamisch)
@@ -82,25 +84,7 @@ def _display_name(name: str) -> str:
     return name or "WS 1"
 
 
-class _GoGaugeEntity(CoordinatorEntity):
-    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-            "name": "Go Gauge HA",
-            "manufacturer": MANUFACTURER,
-            "model": MODEL,
-        }
-
-    def _ws(self, key: str) -> dict[str, Any] | None:
-        for ws in self.coordinator.data.get("workspaces", []):
-            if ws["key"] == key:
-                return ws
-        return None
-
-
-class UsagePercentSensor(_GoGaugeEntity, SensorEntity):
+class UsagePercentSensor(GoGaugeEntityBase, SensorEntity):
     """Percent usage of one workspace window (5h/week/month).
 
     Bei 'no_subscription' (kein aktives Abo) zeigt der Sensor den Status
@@ -111,7 +95,8 @@ class UsagePercentSensor(_GoGaugeEntity, SensorEntity):
     _attr_native_unit_of_measurement = "%"
     _attr_icon = "mdi:speedometer"
 
-    def __init__(self, coordinator, entry, key: str, ws_name: str, win: str, label: str) -> None:
+    def __init__(self, coordinator, entry, *, key: str, win: str, label: str,
+                 ws_name: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
@@ -159,13 +144,14 @@ class UsagePercentSensor(_GoGaugeEntity, SensorEntity):
         return attrs
 
 
-class ResetTimestampSensor(_GoGaugeEntity, SensorEntity):
+class ResetTimestampSensor(GoGaugeEntityBase, SensorEntity):
     """Concrete reset time as HA timestamp entity."""
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:timer-reset"
 
-    def __init__(self, coordinator, entry, key: str, ws_name: str, win: str, label: str) -> None:
+    def __init__(self, coordinator, entry, *, key: str, win: str, label: str,
+                 ws_name: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
@@ -182,7 +168,7 @@ class ResetTimestampSensor(_GoGaugeEntity, SensorEntity):
         return val if isinstance(val, datetime) else None
 
 
-class ModelCatalogSensor(_GoGaugeEntity, SensorEntity):
+class ModelCatalogSensor(GoGaugeEntityBase, SensorEntity):
     """EIN Sensor fuer den kompletten Modell-Katalog (dynamisch via Attribute).
 
     State = Anzahl gelisteter Modelle. Attribute enthaelt das ganze Verzeichnis
@@ -230,7 +216,7 @@ class ModelCatalogSensor(_GoGaugeEntity, SensorEntity):
         return attrs
 
 
-class LiveModelsCountSensor(_GoGaugeEntity, SensorEntity):
+class LiveModelsCountSensor(GoGaugeEntityBase, SensorEntity):
     """Live verfuegbare Modelle laut API."""
 
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -247,7 +233,7 @@ class LiveModelsCountSensor(_GoGaugeEntity, SensorEntity):
         return block.get("model_count_live")
 
 
-class CheapestModelSensor(_GoGaugeEntity, SensorEntity):
+class CheapestModelSensor(GoGaugeEntityBase, SensorEntity):
     """Guenstigstes bezahltes Modell nach gemischtem $/1M."""
 
     _attr_icon = "mdi:crown-outline"
@@ -270,7 +256,7 @@ class CheapestModelSensor(_GoGaugeEntity, SensorEntity):
         }
 
 
-class FreeModelsSensor(_GoGaugeEntity, SensorEntity):
+class FreeModelsSensor(GoGaugeEntityBase, SensorEntity):
     _attr_icon = "mdi:gift-outline"
 
     def __init__(self, coordinator, entry) -> None:
