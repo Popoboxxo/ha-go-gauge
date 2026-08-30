@@ -1,0 +1,169 @@
+agent-meta-version: 0.101.0-beta.4
+ai-providers:
+- Claude
+- Gemini
+- Opencode
+platforms:
+- hacs
+dod-preset: standard
+dod:
+  req-traceability: false
+  tests-required: true
+  codebase-overview: false
+  security-audit: false
+max-parallel-agents: 2
+speech-mode: full
+hooks:
+  dod-push-check:
+    enabled: false
+
+# Generierte Provider-Ordner (Agents/Rules/Hooks/Commands/Skills) NICHT committen —
+# jederzeit per `sync.py` aus dem agent-meta-Submodule reproduzierbar.
+gitignore:
+  generated: true
+  custom_entries:
+    - .claude/agents/
+    - .claude/rules/
+    - .claude/hooks/
+    - .claude/commands/
+    - .claude/skills/
+    - .claude/pipeline-details/
+    - .gemini/agents/
+    - .gemini/rules/
+    - .gemini/commands/
+    - .gemini/skills/
+    - .gemini/pipeline-details/
+    - .opencode/agents/
+    - .opencode/commands/
+    - .opencode/skills/
+    - .opencode/pipeline-details/
+
+project:
+  name: ha-go-gauge
+  prefix: gg
+  short: go-gauge
+provider-options:
+  Claude: {}
+variables:
+  PROJECT_NAME: ha-go-gauge
+  PROJECT_DESCRIPTION: HACS Custom Integration für Home Assistant, die direkt gegen
+    die OpenCode-Go-API (opencode.ai) spricht und Nutzung, Limits und Kosten-Ratio
+    des Go-Budgets als Entities bereitstellt.
+  PROJECT_GOAL: Nutzern des OpenCode-Go-Abos ihr API-Budget (5h/Weekly/Monthly-Fenster,
+    Modell-Katalog, Rate-Limits, Abo-Status) direkt im Home-Assistant-Dashboard sichtbar
+    machen.
+  PLATFORM: Home Assistant Custom Integration (HACS)
+  RUNTIME: Home Assistant Core (Python)
+  LANGUAGE: Python 3
+  PROJECT_LANGUAGES: Python
+  COMMUNICATION_LANGUAGE: Deutsch
+  USER_INPUT_LANGUAGE: Deutsch
+  DOCS_LANGUAGE: Englisch
+  INTERNAL_DOCS_LANGUAGE: Deutsch
+  CODE_LANGUAGE: Englisch
+  AGENT_META_REPO: Popoboxxo/agent-meta
+  GIT_PLATFORM: GitHub
+  GIT_REMOTE_URL: https://github.com/Popoboxxo/ha-go-gauge
+  GIT_MAIN_BRANCH: main
+  SYSTEM_DEPENDENCIES: '- homeassistant: custom_components integration (domain `go_gauge`)
+
+    - pytest: Unit-Tests (eigene HA-Stubs, siehe pytest.ini)
+
+    '
+  SYSTEM_URLS: '- OpenCode Go API: `https://opencode.ai`'
+  BUILD_COMMAND: (kein Build — reine Python-Integration)
+  TEST_COMMAND: pytest
+  DEV_COMMANDS: 'pytest
+
+    '
+  DEV_STACK_START: (kein Dev-Stack — Test gegen echte/gemockte HA-Instanz)
+  DEV_STACK_RELOAD: ''
+  PROJECT_CONTEXT: Eigenständige HACS-Integration (domain `go_gauge`), die pro Home-Assistant-Instanz
+    einen OpenCode-Go-Workspace via API-Token anbindet. Keine externe Zusatzkomponente,
+    kein Monitor — direkter Cloud-Polling gegen opencode.ai.
+  PROJECT_STRUCTURE: "custom_components/go_gauge/\n  __init__.py       # Setup / Entry-Point\n\
+    \  config_flow.py    # UI-Konfiguration\n  coordinator.py    # DataUpdateCoordinator\
+    \ (Polling)\n  entity.py         # Basis-Entity\n  sensor.py         # Nutzungs-/Modell-Sensoren\n\
+    \  binary_sensor.py  # Rate-Limit-/Abo-Status\n  number.py         # Update-Intervalle\n\
+    \  switch.py         # Auto-Update-Zyklen\n  button.py         # Manueller Refresh\n\
+    \  diagnostics.py    # Diagnose-Export\n  const.py          # Konstanten\n  manifest.json\n\
+    \  strings.json\ntests/\n"
+  ENTRY_POINT_PATTERN: custom_components/go_gauge/__init__.py — Integration-Setup
+  KEY_PATTERNS: '- DataUpdateCoordinator pro Workspace-Instanz, getrennte Auto-Update-Zyklen
+    für Usage/Modelle
+
+    - Ein Sensor als "Modell-Katalog" (dynamische Attribute statt Einzel-Entities
+    pro Modell)
+
+    - Nur die erste Instanz ("Catalog Owner") legt Katalog-Entities an — keine Duplikate
+
+    '
+  ARCHITECTURE: "custom_components/go_gauge/\n  coordinator.py  # Polling-Kern\n \
+    \ entity.py       # Basis für alle Plattformen\n  sensor.py / binary_sensor.py\
+    \ / number.py / switch.py / button.py\n"
+  CODE_CONVENTIONS: '- Python 3, HA-Integrationskonventionen (async, DataUpdateCoordinator)
+
+    - snake_case für Module/Funktionen, PascalCase für Klassen
+
+    - Positionale Argumente vermeiden wo Verwechslungsgefahr besteht (siehe v0.6.1-Fix)
+
+    '
+  EXTRA_DONTS: ''
+  CODE_QUALITY_RULES: '- Keine ungenutzten Imports
+
+    - Type Hints wo sinnvoll
+
+    - Keine Blocking-Calls im Event-Loop
+
+    '
+  TESTER_SNIPPETS_PATH: tester/python-pytest.md
+  DEVELOPER_SNIPPETS_PATH: developer/python-pytest.md
+  TEST_COMMANDS: 'pytest
+
+    '
+  BUILD_COMMANDS: (kein Build)
+  REQ_CATEGORIES: '- Kernfunktionalität (Sensoren, Coordinator)
+
+    - Config Flow / Setup
+
+    - Nichtfunktionale Anforderungen (Rate-Limits, Diagnostics)
+
+    '
+  SERVICE_NAME: go_gauge
+  CONTAINER_NAME: ha-go-gauge-dev
+  PRIMARY_PORT: ''
+  EXTRA_PORTS: ''
+  DOCKER_STACKS_OVERVIEW: ''
+  EXTRA_VOLUMES: ''
+  EXTRA_VOLUME_DEFINITIONS: ''
+  EXTRA_ENV_VARS: ''
+  EXTRA_STARTUP_INFO: ''
+  HOST_LAN_IP: 192.168.1.100
+  PRIMARY_IMAGE_TAG: ''
+  PLUGIN_DIR_NAME: go_gauge
+  BUILD_OUTPUT: '- custom_components/go_gauge/ (direkt via HACS installiert, kein
+    Build-Artefakt)
+
+    '
+  ARTIFACT_ZIP_CMD: ''
+  ARTIFACT_TAR_CMD: ''
+  GH_ASSETS: ''
+  REQUIRED_BINARIES_SECTION: Keine externen Binaries erforderlich.
+  BINARY_INSTALL_STEPS: ''
+  REQUIRED_BINARY_NAMES: (keine)
+  BUILD_SYSTEM_NOTES: Keine Build-Pipeline — HACS installiert custom_components/go_gauge
+    direkt.
+  VERSION_DIST_BEHAVIOUR: Version wird manuell in manifest.json gepflegt und per GitHub-Release
+    getaggt.
+# Which rules are active: default (all), minimal (situational off), silent (only essentials)
+rules-preset: default
+# The active tier preset mapped against config/tier-presets.yaml. Adjusts model selection globally. Use se-focus: true instead of the deprecated '(SE)' suffix variants.
+tier-preset: Normal
+# When true, SE roles (se-architect, se-critic, se-developer, etc.) are upgraded one tier before preset mapping is applied. Replaces the deprecated '(SE)' suffix in tier-preset names.
+se-focus: false
+# The active naming/versioning conventions preset, matched against config/conventions-presets.yaml. Individual overrides via 'conventions' block. Precedence: conventions > conventions-preset > 'default'.
+conventions-preset: default
+# When true, sync.py injects a debug block into every generated agent. Active agents announce themselves ([Agent: <name>]), log every delegation (→ Delegiere an: ...), and confirm completion (✓ [Agent: <name>] fertig). Default: false — no change to any agent file.
+debug-mode: false
+# Allow sync.py to write files containing detected secrets to committed (non-gitignored) paths. Default: false — sync aborts with an error when a secret is detected in a committed file. Set to true only when you deliberately commit secret-looking values (e.g. static demo tokens). NOT recommended for production projects.
+allow-committed-secrets: false

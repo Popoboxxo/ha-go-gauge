@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git reset --hard:*)",
+      ".gemini/**",
+      ".opencode/**",
+      "**/opencode.json",
+      "**/AGENTS.md"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/orchestrator-guard.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

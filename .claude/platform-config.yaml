@@ -1,0 +1,12 @@
+# .claude/platform-config.yaml — Projekt-Overrides für aktive Plattform-Layer
+# Siehe .agent-meta/platform-configs/hacs.defaults.yaml für alle Keys.
+
+platform:
+  hacs:
+    custom_components_path: "custom_components"
+    integration_repo_url: "https://github.com/Popoboxxo/ha-go-gauge"
+    reference_repo_url: "https://github.com/home-assistant/core"
+    # "hacs-integration-review" existiert (Stand v0.101.0-beta.4) noch nicht im
+    # agent-meta-Submodule — nur die development-Skill referenzieren, bis es sie gibt.
+    project_skills: "hacs-integration-development"
+    dev_instance_url: ""
