@@ -59,23 +59,6 @@ async def async_setup_entry(
         entities.append(LiveModelsCountSensor(coordinator, entry))
         entities.append(CheapestModelSensor(coordinator, entry))
         entities.append(FreeModelsSensor(coordinator, entry))
-        # Settings-Entities ebenfalls NUR vom Owner (sonst Duplikate)
-        try:
-            from .number import (
-                ModelsRefreshMinutesNumber,
-                UsageRefreshMinutesNumber,
-                WarnPercentNumber,
-            )
-            from .switch import AutoUpdateModelsSwitch, AutoUpdateUsageSwitch
-            entities.extend([
-                WarnPercentNumber(coordinator, entry),
-                UsageRefreshMinutesNumber(coordinator, entry),
-                ModelsRefreshMinutesNumber(coordinator, entry),
-                AutoUpdateUsageSwitch(coordinator, entry),
-                AutoUpdateModelsSwitch(coordinator, entry),
-            ])
-        except ImportError:  # pragma: no cover
-            _LOGGER.warning("Go Gauge: Settings-Plattformen nicht ladbar")
 
     async_add_entities(entities)
 
