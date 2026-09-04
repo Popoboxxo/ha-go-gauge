@@ -111,12 +111,17 @@ class GoGaugeOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
             new_data = {**self.entry.data}
-            if user_input.pop("_rename_workspace", False):
-                pass  # Name kommt aus workspace_name Feld unten
             if user_input.get("workspace_name"):
                 new_data["workspace_name"] = user_input["workspace_name"].strip()
-            self.hass.config_entries.async_update_entry(self.entry, data=new_data)
             user_input.pop("workspace_name", None)
+            # Data (Rename) und Options in EINEM async_update_entry-Aufruf setzen:
+            # der OptionsFlowManager ruft nach async_create_entry() intern nochmal
+            # async_update_entry(entry, options=...) auf - da die Options hier
+            # bereits identisch gesetzt sind, erkennt HA keine Aenderung mehr und
+            # der zweite Aufruf feuert den Update-Listener (Reload) nicht erneut.
+            self.hass.config_entries.async_update_entry(
+                self.entry, data=new_data, options=user_input
+            )
             return self.async_create_entry(title="", data=user_input)
 
         opts = self.entry.options
