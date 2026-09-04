@@ -17,8 +17,9 @@ from typing import Any
 import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_WORKSPACE_NAME,
@@ -30,9 +31,9 @@ from .const import (
 USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
 
 
-async def _probe_token(hass, token: str) -> tuple[bool, str | None]:
+async def _probe_token(hass: HomeAssistant, token: str) -> tuple[bool, str | None]:
     """Live-Check eines Tokens - nur fuer die Rueckmeldung, nicht zwingend."""
-    session = aiohttp.ClientSession()
+    session = async_get_clientsession(hass)
     try:
         async with session.get(
             USAGE_URL,
@@ -49,8 +50,6 @@ async def _probe_token(hass, token: str) -> tuple[bool, str | None]:
             return True, None
     except Exception:  # noqa: BLE001
         return False, "cannot_connect"
-    finally:
-        await session.close()
 
 
 class GoGaugeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
