@@ -229,6 +229,10 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if usage_due:
             fresh = []
             ok_any = False
+            # Sammelt fehlende erwartete Felder ueber alle Workspaces dieses
+            # Update-Zyklus, damit nur EINE aggregierte Warnung geloggt wird
+            # (kein Log-Spam pro Workspace/Fenster).
+            missing_fields: set[str] = set()
             for i, token in enumerate(self._tokens, start=1):
                 key = f"ws{i}"
                 old = prev_ws.get(key, {})
@@ -236,9 +240,30 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                          "status": "ok", "windows": {}}
                 try:
                     res = await self._client.fetch_usage(token)
+                    # Audit vom 2026-09-04: Ein Feldnamen-Mismatch zwischen der
+                    # opencode.ai-API-Response und diesem Parser wird als
+                    # moeglicher Root-Cause-Kandidat fuer leere/falsche
+                    # Sensordaten vermutet - NICHT gegen die Live-API
+                    # verifiziert. Diese Pruefung macht ein fehlendes
+                    # erwartetes Feld ueber eine Log-Warnung SICHTBAR statt es
+                    # wie bisher lautlos per dict.get() als None durchzureichen;
+                    # das bestehende Fallback-Verhalten (None/alter Wert)
+                    # bleibt dabei unveraendert. Unsere eigenen synthetischen
+                    # 403-Antworten (status in no_subscription/error, siehe
+                    # fetch_usage) haben absichtlich ein leeres "usage": {} und
+                    # zaehlen daher nicht als Schema-Drift.
+                    is_synthetic_error = res.get("status") in ("no_subscription", "error")
+                    if not is_synthetic_error and "usage" not in res:
+                        missing_fields.add("usage")
+                    if not is_synthetic_error and "status" not in res:
+                        missing_fields.add("status")
                     api = res.get("usage") or {}
                     for api_key, win in (("rolling", "5h"), ("weekly", "week"), ("monthly", "month")):
+                        if not is_synthetic_error and api_key not in api:
+                            missing_fields.add(f"usage.{api_key}")
                         blk = api.get(api_key) or {}
+                        if not is_synthetic_error and api_key in api and "resetsAt" not in blk:
+                            missing_fields.add(f"usage.{api_key}.resetsAt")
                         entry["windows"][win] = {
                             "percent": blk.get("percent"),
                             "status": blk.get("status"),
@@ -258,6 +283,13 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _LOGGER.warning("Go Gauge %s: Abruf fehlgeschlagen (%s) - behalte alten Stand",
                                     key, err)
                 fresh.append(entry)
+            if missing_fields:
+                _LOGGER.warning(
+                    "Go Gauge: erwartete Felder fehlen in der Usage-API-Response "
+                    "(%s) - moeglicher Feldnamen-Mismatch, siehe Audit 2026-09-04; "
+                    "betroffene Sensoren fallen auf None/alten Wert zurueck",
+                    ", ".join(sorted(missing_fields)),
+                )
             usage = fresh
             self.last_usage_fetch = now
             for w in usage:
