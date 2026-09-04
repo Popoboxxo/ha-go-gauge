@@ -63,11 +63,14 @@ class RateLimitedBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
 
     @property
     def available(self) -> bool:
-        """Nicht verfuegbar (unavailable), wenn kein Abo - nicht einfach OFF."""
+        """Nicht verfuegbar (unavailable), wenn kein Abo oder Update fehlschlaegt.
+
+        Respektiert zusaetzlich den Coordinator-Update-Erfolg (super().available),
+        damit veraltete Daten nach einem fehlgeschlagenen Refresh nicht faelschlich
+        als verfuegbar angezeigt werden - nicht einfach OFF.
+        """
         ws = self._ws(self._key)
-        if ws and ws.get("status") == "no_subscription":
-            return False
-        return True
+        return super().available and not (ws and ws.get("status") == "no_subscription")
 
 
 class SubscriptionActiveBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
