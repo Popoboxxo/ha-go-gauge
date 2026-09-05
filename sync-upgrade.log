@@ -1,0 +1,39 @@
+  !  Config validation warnings (1) — fix or install jsonschema to suppress this check:
+       agent-meta-version: '0.101.0-beta.5' does not match '^\\d+\\.\\d+\\.\\d+$'
+  !  Role 'provider-expert' (provider-expert.md) not in ROLE_MAP — skipped in AGENT_TABLE
+  !  Config validation warnings (1) — fix or install jsonschema to suppress this check:
+       agent-meta-version: '0.101.0-beta.5' does not match '^\\d+\\.\\d+\\.\\d+$'
+  !  Config validation warnings (1) — fix or install jsonschema to suppress this check:
+       agent-meta-version: '0.101.0-beta.5' does not match '^\\d+\\.\\d+\\.\\d+$'
+  !  platform-config: required field {{platform.hacs.dev_instance_url}} is empty -- add it to .claude/platform-config.yaml
+  !  Variable PIPELINE_DETAILS_DIR not in config — placeholder remains in: rules/1-generic/use-orchestrator.md
+  !  Variable ROLE not in config — placeholder remains in: agents\1-generic\mammouth-expert.md
+Traceback (most recent call last):
+  File "C:\Repositories\ha-go-gauge\.agent-meta\scripts\sync.py", line 1767, in <module>
+    main()
+    ~~~~^^
+  File "C:\Repositories\ha-go-gauge\.agent-meta\scripts\sync.py", line 1762, in main
+    _dispatch(ctx)
+    ~~~~~~~~~^^^^^
+  File "C:\Repositories\ha-go-gauge\.agent-meta\scripts\sync.py", line 1651, in _dispatch
+    _handle_sync(ctx)
+    ~~~~~~~~~~~~^^^^^
+  File "C:\Repositories\ha-go-gauge\.agent-meta\scripts\sync.py", line 1437, in _handle_sync
+    sync_agents_for_provider(agent_meta_root, project_root, config, provider_variables,
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                             log, args.dry_run, provider, provider_config,
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                             platform_vars=platform_vars,
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                             debug_mode=debug_mode)
+                             ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Repositories\ha-go-gauge\.agent-meta\scripts\lib\agent_sync.py", line 627, in sync_agents_for_provider
+    if write_checked(target_path, content, log, rel_label, config=config, dry_run=dry_run, allow_secrets=allow_secrets):
+       ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Repositories\ha-go-gauge\.agent-meta\scripts\lib\io.py", line 260, in write_checked
+    write_atomic(path, content)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "C:\Repositories\ha-go-gauge\.agent-meta\scripts\lib\io.py", line 168, in write_atomic
+    os.replace(tmp_name, path)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^
+PermissionError: [WinError 5] Zugriff verweigert: 'C:\\Repositories\\ha-go-gauge\\.claude\\agents\\.performance-optimizer.md.xdg4xk_9.tmp' -> 'C:\\Repositories\\ha-go-gauge\\.claude\\agents\\performance-optimizer.md'
