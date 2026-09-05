@@ -1,6 +1,28 @@
 #!/usr/bin/env python3
-"""Offline-Logiktest v0.3.1: Zwei-Zyklen-Coordinator + Katalog-Sensor +
-no_subscription-Handling (403 EntitlementError = Workspace ohne Abo)."""
+"""MANUAL LIVE-API SMOKE TEST (not a pytest suite)
+
+This file is NOT automatically collected by pytest. It runs only when invoked
+directly as `python tests/manual_offline_smoke.py` and tests the integration
+against the REAL opencode.ai API with actual authentication tokens.
+
+Requires:
+  - Live internet connection to opencode.ai
+  - Authentication tokens in /opt/data/opencode-go-monitor/.env
+    (format: OPENCODE_WS_<n>_TOKEN=<actual_token_string>)
+
+Test sequence:
+  1. Fetch model catalog from the public API (no auth needed)
+  2. Fetch usage for each configured token (requires valid token + active subscription)
+  3. Verify sensor logic against mock Coordinator with fetched data
+  4. Confirm constants (DEFAULT_USAGE_REFRESH_MINUTES, DEFAULT_MODELS_REFRESH_MINUTES)
+
+The sensor logic phase (step 3) is pure Python—see tests/test_sensor_logic.py for
+pytest-based variants that mock the API layer. This file tests end-to-end behavior
+with real data to catch API schema drift and integration issues that unit tests
+cannot discover.
+
+v0.3.1: Two-cycle Coordinator + Catalog-Sensor + no_subscription-Handling
+(403 EntitlementError = Workspace ohne Abo)."""
 import asyncio
 import importlib.util
 import json
