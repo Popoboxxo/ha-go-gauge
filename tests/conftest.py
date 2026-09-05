@@ -113,10 +113,98 @@ _FAKE_HA_MODULES = [
     "homeassistant.components.diagnostics",
 ]
 
-for _name in _FAKE_HA_MODULES:
-    sys.modules[_name] = _Flexible(_name)
+class _FakeConfigFlow:
+    """Minimal stand-in for ``homeassistant.config_entries.ConfigFlow``.
 
-# Real submodule resolution must not kick in for anything below this fake
-# root - otherwise `from homeassistant.somewhere_not_listed_above import X`
-# would silently succeed against a REAL (but only half-faked) package tree.
-sys.modules["homeassistant"].__path__ = []
+    The integration declares ``class GoGaugeConfigFlow(ConfigFlow,
+    domain=DOMAIN)``. Python forwards that ``domain=`` class keyword to the
+    base class' ``__init_subclass__``; real Home Assistant defines one that
+    consumes it, but a generic ``_Flexible`` class does not, so the class
+    statement would raise ``TypeError``. This base accepts and discards
+    ``domain`` (plus any further class kwargs) exactly like the real
+    machinery, and carries the ``VERSION`` attribute the flow overrides.
+    """
+
+    VERSION: int = 1
+
+    def __init_subclass__(
+        cls, *, domain: str | None = None, **kwargs: object
+    ) -> None:
+        """Swallow the ``domain=`` class keyword, mirroring real HA."""
+        super().__init_subclass__(**kwargs)
+
+
+def _identity_callback(func: object) -> object:
+    """Stand-in for the ``@homeassistant.core.callback`` decorator (identity).
+
+    The real symbol is a pass-through marker decorator, so returning the
+    wrapped callable unchanged is sufficient for the offline tests.
+    """
+    return func
+
+
+class _ClientTimeout:
+    """Minimal stand-in for ``aiohttp.ClientTimeout``."""
+
+    def __init__(self, total: float | None = None) -> None:
+        self.total = total
+
+
+def install_ha_stubs() -> None:
+    """(Re)install the shared homeassistant/aiohttp fakes - idempotently.
+
+    Called once below at import time. It is ALSO re-callable so a test module
+    that must import the real config_flow (see tests/test_config_flow.py) can
+    guarantee the config-flow-specific stubs are in place immediately before
+    the import: other test modules run their own inline fake setup at
+    collection time and REPLACE these sys.modules entries with their own local
+    `_Flexible` fakes, which drops the `ConfigFlow`/`callback` stubs. Since
+    collection order is alphabetical, some of those modules load before
+    test_config_flow, so its loader must not depend on collection order.
+
+    Uses `setdefault` for the base modules so a re-call never throws away a
+    module object the integration code already imported against.
+    """
+    for name in _FAKE_HA_MODULES:
+        sys.modules.setdefault(name, _Flexible(name))
+
+    # Real submodule resolution must not kick in for anything below this fake
+    # root - otherwise `from homeassistant.not_listed_above import X` would
+    # silently succeed against a REAL (but only half-faked) package tree.
+    sys.modules["homeassistant"].__path__ = []
+
+    # Attribute-style parent imports: `config_flow.py` uniquely does
+    # `from homeassistant import config_entries` (an ATTRIBUTE import). Python
+    # runs `getattr(homeassistant, "config_entries")` FIRST and only falls
+    # back to the sys.modules submodule when that raises. On a `_Flexible`
+    # package `getattr` never raises - it hands back a throwaway
+    # `type("config_entries", (), {})`, so `config_entries.ConfigFlow` then
+    # fails with "type object 'config_entries' has no attribute 'ConfigFlow'".
+    # Wiring each faked submodule as a real attribute on its parent package
+    # makes the attribute lookup resolve to the faked MODULE. Direct submodule
+    # imports (`from homeassistant.config_entries import ConfigEntry`) are
+    # unaffected.
+    for name in _FAKE_HA_MODULES:
+        parent_name, _, leaf = name.rpartition(".")
+        if parent_name:
+            setattr(sys.modules[parent_name], leaf, sys.modules[name])
+
+    # A real class object (not a `_Flexible` throwaway) so
+    # `class X(ConfigFlow, domain=...)` works, and an identity `callback`.
+    sys.modules["homeassistant.config_entries"].ConfigFlow = _FakeConfigFlow
+    sys.modules["homeassistant.core"].callback = _identity_callback
+
+    # aiohttp: `config_flow.py` / `coordinator.py` call
+    # `aiohttp.ClientTimeout(...)` and reference `aiohttp.ClientSession`. These
+    # offline unit tests never perform real HTTP (sessions are always mocked),
+    # so aiohttp is faked centrally here - this used to be hand-rolled at the
+    # top of every test module. `ClientTimeout` needs a real constructor
+    # accepting `total=`; any other attribute falls through to `_Flexible`.
+    aiohttp_mod = sys.modules.get("aiohttp")
+    if aiohttp_mod is None or not hasattr(aiohttp_mod, "ClientTimeout"):
+        aiohttp_mod = _Flexible("aiohttp")
+        sys.modules["aiohttp"] = aiohttp_mod
+    aiohttp_mod.ClientTimeout = _ClientTimeout
+
+
+install_ha_stubs()
