@@ -11,6 +11,7 @@ against actual code (not inline logic duplicates).
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -70,8 +71,8 @@ class TestAsyncMigrateEntryLogic:
     """
 
     @pytest.mark.asyncio
-    async def test_migrate_v1_to_v4_extracts_first_token(self):
-        """[AUDIT-P2-11] v1->v4 migration keeps first token from list."""
+    async def test_migrate_v1_to_v5_extracts_first_token(self):
+        """[AUDIT-P2-11] v1->v5 migration keeps first token from list."""
         # Create mock entry for v1
         entry = MagicMock()
         entry.version = 1
@@ -86,8 +87,8 @@ class TestAsyncMigrateEntryLogic:
 
         # Migration should succeed
         assert result is True
-        # Entry version should be updated to 4
-        assert entry.version == 4
+        # Entry version should be updated to 5 (current)
+        assert entry.version == 5
         # First token should be extracted
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
@@ -143,8 +144,8 @@ class TestAsyncMigrateEntryLogic:
         assert "tokens" not in updated_data
 
     @pytest.mark.asyncio
-    async def test_migrate_v4_no_change(self):
-        """[AUDIT-P2-11] v4 (current) migration is no-op."""
+    async def test_migrate_v4_to_v5_preserves_data(self):
+        """[AUDIT-P2-11] v4->v5 migration advances version but preserves data."""
         original_data = {"token": "current-token", "workspace_name": "My WS"}
         entry = MagicMock()
         entry.version = 4
@@ -157,7 +158,8 @@ class TestAsyncMigrateEntryLogic:
         result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        # Data should not change
+        # Version advances to current (5); entry.data is untouched.
+        assert entry.version == 5
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
         updated_data = call_args[1]["data"]
@@ -165,9 +167,9 @@ class TestAsyncMigrateEntryLogic:
 
     @pytest.mark.asyncio
     async def test_migrate_future_version_rejected(self):
-        """[AUDIT-P2-11] Versions > 4 are rejected (cannot downgrade)."""
+        """[AUDIT-P2-11] Versions > 5 are rejected (cannot downgrade)."""
         entry = MagicMock()
-        entry.version = 5
+        entry.version = 6
         entry.data = {}
         entry.options = {}
 
@@ -197,6 +199,93 @@ class TestAsyncMigrateEntryLogic:
         updated_data = call_args[1]["data"]
         # Empty token list should yield empty string
         assert updated_data["token"] == ""
+
+
+class TestUniqueIdHashMigration:
+    """v4->v5: ConfigEntry.unique_id plaintext-token-fragment -> SHA-256 hash.
+
+    Security migration (AUDIT-2026-09-04): the pre-v5 unique_id embedded a
+    16-char plaintext token fragment persisted in HA storage. v5 replaces it
+    with a SHA-256 hash recomputed from the stored token, matching exactly
+    what const.token_unique_id (and thus the config flow) now produces.
+    """
+
+    @staticmethod
+    def _expected(token: str) -> str:
+        """Independently derive the canonical hashed unique_id."""
+        return f"go_gauge_{hashlib.sha256(token.encode()).hexdigest()[:16]}"
+
+    @pytest.mark.asyncio
+    async def test_v4_to_v5_hashes_unique_id(self):
+        """[AUDIT-P2-11] v4->v5 replaces the plaintext-fragment id with the hash."""
+        token = "MyWorkspaceToken-abcdef123456"
+        entry = MagicMock()
+        entry.version = 4
+        # Old (leaky) format: first 16 chars of the token, lowercased.
+        entry.unique_id = f"go_gauge_{token[:16].lower()}"
+        entry.data = {"token": token, "workspace_name": "WS"}
+        entry.options = {}
+
+        hass = MagicMock()
+        hass.config_entries = MagicMock()
+
+        result = await init_module.async_migrate_entry(hass, entry)
+
+        assert result is True
+        assert entry.version == 5
+        call_args = hass.config_entries.async_update_entry.call_args
+        assert call_args is not None
+        # (a) new unique_id equals the exact SHA-256 result
+        assert call_args[1]["unique_id"] == self._expected(token)
+        # no plaintext token fragment survives in the id
+        assert token[:16].lower() not in call_args[1]["unique_id"]
+        # (c) entry.data (token etc.) is preserved untouched
+        assert call_args[1]["data"] == {"token": token, "workspace_name": "WS"}
+
+    @pytest.mark.asyncio
+    async def test_v5_migration_is_idempotent(self):
+        """[AUDIT-P2-11] Re-running on an already-hashed v5 entry keeps the id."""
+        token = "StableToken-0987654321"
+        hashed = self._expected(token)
+        entry = MagicMock()
+        entry.version = 5
+        entry.unique_id = hashed
+        entry.data = {"token": token, "workspace_name": "WS"}
+        entry.options = {}
+
+        hass = MagicMock()
+        hass.config_entries = MagicMock()
+
+        result = await init_module.async_migrate_entry(hass, entry)
+
+        assert result is True
+        assert entry.version == 5
+        call_args = hass.config_entries.async_update_entry.call_args
+        assert call_args is not None
+        # unique_id stays the already-hashed value (no re-hash, no corruption)
+        assert call_args[1]["unique_id"] == hashed
+
+    @pytest.mark.asyncio
+    async def test_v4_to_v5_missing_token_keeps_unique_id(self):
+        """[AUDIT-P2-11] Edge case: no token -> unique_id untouched, no raise."""
+        old_uid = "go_gauge_legacyplaintext"
+        entry = MagicMock()
+        entry.version = 4
+        entry.unique_id = old_uid
+        entry.data = {"token": "", "workspace_name": "Empty"}
+        entry.options = {}
+
+        hass = MagicMock()
+        hass.config_entries = MagicMock()
+
+        result = await init_module.async_migrate_entry(hass, entry)
+
+        assert result is True
+        assert entry.version == 5
+        call_args = hass.config_entries.async_update_entry.call_args
+        assert call_args is not None
+        # Defensive: without a token the old unique_id is left as-is.
+        assert call_args[1]["unique_id"] == old_uid
 
 
 class TestAsyncSetupEntryLogic:

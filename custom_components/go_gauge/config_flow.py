@@ -26,6 +26,7 @@ from .const import (
     DEFAULT_WARN_PERCENT,
     DOMAIN,
     USER_AGENT,
+    token_unique_id,
 )
 
 USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
@@ -55,7 +56,7 @@ async def _probe_token(hass: HomeAssistant, token: str) -> tuple[bool, str | Non
 class GoGaugeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Ein Workspace = eine Instanz: Name + Token."""
 
-    VERSION = 4
+    VERSION = 5
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         errors: dict[str, str] = {}
@@ -76,8 +77,10 @@ class GoGaugeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         warn = "cannot_connect_warn"  # Netz-Problem: Speichern erlaubt
                 if not errors:
                     # Eindeutige ID pro TOKEN (nicht pro Name) - gleicher Token
-                    # zweimal = echter Duplicate-Fall.
-                    await self.async_set_unique_id(f"go_gauge_{token[:16].lower()}")
+                    # zweimal = echter Duplicate-Fall. SHA-256-Hash statt
+                    # Klartext-Fragment, damit kein Token-Teil in HA-Storage /
+                    # Diagnostics landet (AUDIT-2026-09-04).
+                    await self.async_set_unique_id(token_unique_id(token))
                     self._abort_if_unique_id_configured()
                     title = f"Go Gauge {name}"
                     if warn:

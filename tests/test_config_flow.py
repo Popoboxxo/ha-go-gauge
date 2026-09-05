@@ -15,6 +15,7 @@ convention).
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -148,28 +149,33 @@ class TestAsyncStepUserLogic:
         assert hasattr(config_flow.GoGaugeConfigFlow, "async_step_user")
         assert hasattr(config_flow.GoGaugeConfigFlow, "VERSION")
 
-    def test_unique_id_format_token_prefix(self):
-        """[AUDIT-P2-11] unique_id uses first 16 chars of token, lowercased.
+    def test_unique_id_format_sha256_hash(self):
+        """[AUDIT-P2-11] unique_id is a SHA-256 hash, not a plaintext fragment.
 
-        Note: This test verifies the formula used in config_flow.py line 80.
+        Since v5 the ConfigEntry.unique_id no longer contains any part of the
+        token (see const.token_unique_id / AUDIT-2026-09-04). This asserts the
+        exact canonical value (independently derived via hashlib).
         """
         token = "MyVeryLongTokenValue1234567890"
-        # Replicate the unique_id generation from config_flow.py:80
-        unique_id = f"go_gauge_{token[:16].lower()}"
+        expected = f"go_gauge_{hashlib.sha256(token.encode()).hexdigest()[:16]}"
 
-        # token[:16] from "MyVeryLongTokenValue1234567890" is "MyVeryLongTokenVa"
-        # lowercased: "myverylongtokenv" (exactly 16 chars)
-        assert unique_id == "go_gauge_myverylongtokenv"
-        assert len(unique_id) == 25  # "go_gauge_" (9) + 16 chars
-        assert unique_id.islower()
+        unique_id = const.token_unique_id(token)
+
+        assert unique_id == expected
+        assert len(unique_id) == 25  # "go_gauge_" (9) + 16 hex chars
+        assert unique_id.startswith("go_gauge_")
+        # The plaintext token fragment must NOT leak into the id.
+        assert token[:16].lower() not in unique_id
 
     def test_unique_id_format_short_token(self):
-        """[AUDIT-P2-11] unique_id handles tokens shorter than 16 chars."""
+        """[AUDIT-P2-11] Short tokens still yield a full 25-char hashed id."""
         token = "short"
-        unique_id = f"go_gauge_{token[:16].lower()}"
+        expected = f"go_gauge_{hashlib.sha256(token.encode()).hexdigest()[:16]}"
 
-        assert unique_id == "go_gauge_short"
-        assert len(unique_id) == 14  # "go_gauge_" + 5 chars
+        unique_id = const.token_unique_id(token)
+
+        assert unique_id == expected
+        assert len(unique_id) == 25  # hash length is independent of token length
 
     def test_token_whitespace_stripping_logic(self):
         """[AUDIT-P2-11] Token whitespace is stripped before use.
@@ -197,8 +203,8 @@ class TestAsyncStepUserLogic:
 class TestUniqueIdBehavior:
     """Tests for unique_id generation and duplicate detection logic.
 
-    Tests rely on the unique_id formula: f"go_gauge_{token[:16].lower()}"
-    (used in config_flow.py line 80).
+    Tests exercise the real const.token_unique_id helper (SHA-256 based,
+    used by config_flow.py entry creation and __init__.py migration).
     """
 
     def test_duplicate_unique_ids_same_token(self):
@@ -206,11 +212,11 @@ class TestUniqueIdBehavior:
         token1 = "my-secret-token-abc123"
         token2 = "my-secret-token-abc123"
 
-        uid1 = f"go_gauge_{token1[:16].lower()}"
-        uid2 = f"go_gauge_{token2[:16].lower()}"
+        uid1 = const.token_unique_id(token1)
+        uid2 = const.token_unique_id(token2)
 
         assert uid1 == uid2, "Duplicate detection relies on same unique_id"
-        # Both should be exactly 25 chars: "go_gauge_" (9) + token[:16] (16)
+        # "go_gauge_" (9) + 16 hex chars
         assert len(uid1) == 25
 
     def test_different_tokens_different_unique_ids(self):
@@ -218,38 +224,42 @@ class TestUniqueIdBehavior:
         token1 = "token-aaa-111111"
         token2 = "token-bbb-222222"
 
-        uid1 = f"go_gauge_{token1[:16].lower()}"
-        uid2 = f"go_gauge_{token2[:16].lower()}"
+        uid1 = const.token_unique_id(token1)
+        uid2 = const.token_unique_id(token2)
 
         assert uid1 != uid2
         # Verify they're constructed the same way
         assert uid1.startswith("go_gauge_")
         assert uid2.startswith("go_gauge_")
 
-    def test_unique_id_case_normalization(self):
-        """[AUDIT-P2-11] unique_id normalizes token to lowercase."""
+    def test_unique_id_is_case_sensitive(self):
+        """[AUDIT-P2-11] SHA-256 ids are case-sensitive.
+
+        Behavior change since v5: the pre-v5 formula lowercased the token
+        fragment, so case-only variants collided. A raw-token SHA-256 hash is
+        case-sensitive - correct, since tokens are case-sensitive secrets.
+        """
         token_upper = "MY-SECRET-TOKEN-1"
         token_lower = "my-secret-token-1"
 
-        uid_upper = f"go_gauge_{token_upper[:16].lower()}"
-        uid_lower = f"go_gauge_{token_lower[:16].lower()}"
+        uid_upper = const.token_unique_id(token_upper)
+        uid_lower = const.token_unique_id(token_lower)
 
-        assert uid_upper == uid_lower
-        # Verify all lowercase
-        assert uid_upper.islower()
+        assert uid_upper != uid_lower
 
 
 class TestConfigFlowVersion:
     """Tests for config flow version constant."""
 
-    def test_config_flow_version_is_four(self):
-        """[AUDIT-P2-11] Config flow VERSION should be 4 (current migration target).
+    def test_config_flow_version_is_five(self):
+        """[AUDIT-P2-11] Config flow VERSION should be 5 (current migration target).
 
+        Bumped from 4 to 5 for the SHA-256 unique_id migration.
         Verifies the constant in GoGaugeConfigFlow class.
         """
         # Import the real VERSION from the module
         assert hasattr(config_flow.GoGaugeConfigFlow, "VERSION")
-        assert config_flow.GoGaugeConfigFlow.VERSION == 4
+        assert config_flow.GoGaugeConfigFlow.VERSION == 5
 
 
 if __name__ == "__main__":
