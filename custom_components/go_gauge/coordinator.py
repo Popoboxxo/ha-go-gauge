@@ -279,7 +279,11 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # TRANSIENTER Fehler (Netz/Cloudflare): LETZTEN STAND BEHALTEN
                     entry = dict(old) if old else entry
                     entry["status"] = old.get("status", "error") if old else "error"
-                    entry["note"] = f"letzter Stand vom {(old.get('fetched_at') or 'Start')}: {err}"
+                    # Hinweis: KEIN Zeitstempel hier - "fetched_at" wird erst
+                    # unten (nach diesem Try/Except-Block) pro Workspace
+                    # gesetzt, ist an dieser Stelle also fuer "old" nicht
+                    # zuverlaessig verfuegbar (Audit 2026-09-04).
+                    entry["note"] = f"Abruf fehlgeschlagen, letzter bekannter Stand beibehalten: {err}"
                     _LOGGER.warning("Go Gauge %s: Abruf fehlgeschlagen (%s) - behalte alten Stand",
                                     key, err)
                 fresh.append(entry)

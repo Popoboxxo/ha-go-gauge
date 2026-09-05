@@ -167,6 +167,12 @@ class ModelCatalogSensor(GoGaugeEntityBase, SensorEntity):
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_model_catalog"
         self._attr_name = "Go Gauge Modelle"
+        # Cache fuer extra_state_attributes, invalidiert ueber
+        # "models_updated_at" (aendert sich nur bei echtem Modell-Refresh,
+        # nicht bei jedem Coordinator-Poll) - vermeidet dict-Copy +
+        # json.dumps bei jedem Attribut-Zugriff (Audit 2026-09-04).
+        self._attrs_cache_key: Any = None
+        self._attrs_cache: dict[str, Any] | None = None
 
     @property
     def native_value(self) -> int | None:
@@ -176,7 +182,12 @@ class ModelCatalogSensor(GoGaugeEntityBase, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        block = dict(self.coordinator.data.get("models_block") or {})
+        block_raw = self.coordinator.data.get("models_block") or {}
+        cache_key = block_raw.get("models_updated_at")
+        if cache_key is not None and cache_key == self._attrs_cache_key and self._attrs_cache is not None:
+            return self._attrs_cache
+
+        block = dict(block_raw)
         models = block.pop("models", [])
         attrs: dict[str, Any] = {
             "models_updated_at": block.get("models_updated_at"),
@@ -196,6 +207,9 @@ class ModelCatalogSensor(GoGaugeEntityBase, SensorEntity):
         }
         # Kompletter Katalog als JSON-String (Templates/LoV-freundlich)
         attrs["catalog_json"] = json.dumps(models, ensure_ascii=False)
+
+        self._attrs_cache_key = cache_key
+        self._attrs_cache = attrs
         return attrs
 
 
