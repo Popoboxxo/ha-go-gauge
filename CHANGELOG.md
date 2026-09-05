@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.1.0] — 2026-09-05
+
+### Summary
+
+Maintenance release without integration code changes: the agent-meta project
+configuration now documents the shared headless Home Assistant test instance
+on this server (endpoints, token location, sync/reset etiquette) and ships
+concrete E2E commands against it, and the HACS platform layer points at the
+local dev instance. The v1.0.0 release notes are additionally committed as
+`CHANGELOG.md` at the repo root. Nothing changed inside
+`custom_components/go_gauge/` — existing users do not need to update for
+functionality reasons.
+
+### Added
+
+- Shared HA test instance documented in agent-meta `PROJECT_CONTEXT`
+  (`/home/hermes/ha-test`, headless Docker HA, localhost-only) and
+  `TEST_COMMANDS` (E2E sync via `bin/sync`, state inspection via
+  `bin/ha GET /api/states`)
+- HACS platform-config `dev_instance_url` pointing at the local dev instance
+  (`http://127.0.0.1:8123`), clearing the sync `[WARN]` for the empty
+  required field
+- `CHANGELOG.md` at the repo root (v1.0.0 notes backfilled from the release
+  draft in `docs/`)
+
+### Full Changelog
+
+https://github.com/Popoboxxo/ha-go-gauge/compare/v1.0.0...v1.1.0
+
 ## [1.0.0] — 2026-09-05
 
 ### Summary
