@@ -25,8 +25,6 @@ def token_unique_id(token: str) -> str:
 MANUFACTURER = "Popoboxxo"
 MODEL = "OpenCode Go"
 
-CONF_HOST = "host"
-CONF_PORT = "port"
 CONF_WARN_PERCENT = "warn_percent"
 CONF_WORKSPACE_NAME = "workspace_name"
 CONF_AUTO_UPDATE_USAGE = "auto_update_usage"
@@ -34,8 +32,6 @@ CONF_USAGE_REFRESH_MINUTES = "usage_refresh_minutes"
 CONF_AUTO_UPDATE_MODELS = "auto_update_models"
 CONF_MODELS_REFRESH_MINUTES = "models_refresh_minutes"
 
-DEFAULT_HOST = "172.20.5.120"
-DEFAULT_PORT = 8765
 DEFAULT_WARN_PERCENT = 80
 DEFAULT_SCAN_INTERVAL = 600  # seconds (legacy)
 DEFAULT_USAGE_REFRESH_MINUTES = 10

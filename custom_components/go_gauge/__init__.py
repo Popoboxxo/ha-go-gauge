@@ -14,7 +14,6 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     CONF_USAGE_REFRESH_MINUTES,
-    CONF_WORKSPACE_NAME,
     DOMAIN,
     token_unique_id,
 )
@@ -86,10 +85,6 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up one Go Gauge workspace instance."""
-    from .const import (
-        CONF_USAGE_REFRESH_MINUTES,
-    )
-
     token: str = str(entry.data.get("token") or "")
     ws_name: str = str(entry.data.get("workspace_name") or "").strip()
 
