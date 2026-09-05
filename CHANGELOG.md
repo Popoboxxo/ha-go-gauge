@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.2.0] — 2026-09-06
+
+### Summary
+
+Bug-fix release: the "Free-Modelle" sensor and the `cheapest_overall`
+attribute could permanently show a model that the live API no longer lists
+(`ox-alpha-free`), because the static `PRICING` table outranked live
+availability. Free models, cheapest model and the cost ranking are now
+computed only over models currently listed by the live API. No device or
+entity changes — entity IDs, unique IDs and automations are unaffected.
+
+### Fixed
+
+- `free_models`, `cheapest_overall`, `cheapest_model` and the cost ranking
+  only consider models currently listed by the live API; PRICING entries
+  removed from the API stay visible in the catalog listing with
+  `live: false` but can no longer occupy the Free/Günstigstes sensors
+- Explicitly empty live model list now yields empty cheapest/free sensors
+  instead of falling back to the static table; a missing live fetch
+  (`live_ids=None`, e.g. first poll not completed) keeps the legacy fallback
+- Catalog sensor attributes relay the coordinator-block values (including a
+  new `live` flag per ranking entry) instead of re-computing over the full
+  model list
+
+### Full Changelog
+
+https://github.com/Popoboxxo/ha-go-gauge/compare/v1.1.0...v1.2.0
+
 ## [1.1.0] — 2026-09-05
 
 ### Summary
