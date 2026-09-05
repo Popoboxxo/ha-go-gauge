@@ -9,4 +9,4 @@ platform:
     # "hacs-integration-review" existiert (Stand v0.101.0-beta.4) noch nicht im
     # agent-meta-Submodule — nur die development-Skill referenzieren, bis es sie gibt.
     project_skills: "hacs-integration-development"
-    dev_instance_url: ""
+    dev_instance_url: "http://127.0.0.1:8123"
