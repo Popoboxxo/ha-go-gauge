@@ -78,9 +78,24 @@ variables:
     '
   DEV_STACK_START: (kein Dev-Stack — Test gegen echte/gemockte HA-Instanz)
   DEV_STACK_RELOAD: ''
-  PROJECT_CONTEXT: Eigenständige HACS-Integration (domain `go_gauge`), die pro Home-Assistant-Instanz
+  PROJECT_CONTEXT: |-
+    Eigenständige HACS-Integration (domain `go_gauge`), die pro Home-Assistant-Instanz
     einen OpenCode-Go-Workspace via API-Token anbindet. Keine externe Zusatzkomponente,
     kein Monitor — direkter Cloud-Polling gegen opencode.ai.
+
+    Geteilte HA-Testinstanz (repo-agnostisch, mehrere Plugin-Repos): /home/hermes/ha-test
+    — Headless Home Assistant (Docker), http://127.0.0.1:8123 (nur localhost), Token:
+    /home/hermes/ha-test/.ha-state/token.json (auto-refresh). Single Source of Truth
+    (Endpunkte, Config-Flows, Storage-Details): /home/hermes/ha-test/README.md.
+    Etikette: (1) bin/sync <repo-dir> kopiert custom_components/* und startet HA neu
+    (~10–30 s) — nur die eigene Domain syncen, dazu koordinieren; Registry/Config-
+    Entries anderer Domains überleben den Neustart. (2) bin/reset löscht ALLE Daten
+    aller Plugins (danach bin/provision + Re-Sync) — nur nach Abstimmung. (3)
+    unique_ids stabil halten, NIE ändern — die geteilte Registry akkumuliert. (4)
+    bin/set-language de|en betrifft die GANZE Instanz (friendly_names aller Plugins)
+    — nur koordiniert; Erst-Registrierung der Entities mit korrekter Systemsprache
+    (obj_id-Namen entstehen nur dabei aus dem englischen Anzeigenamen). (5) Tokens
+    (.ha-state/) niemals committen oder kopieren.
   PROJECT_STRUCTURE: "custom_components/go_gauge/\n  __init__.py       # Setup / Entry-Point\n\
     \  config_flow.py    # UI-Konfiguration\n  coordinator.py    # DataUpdateCoordinator\
     \ (Polling)\n  entity.py         # Basis-Entity\n  sensor.py         # Nutzungs-/Modell-Sensoren\n\
@@ -118,9 +133,12 @@ variables:
     '
   TESTER_SNIPPETS_PATH: tester/python-pytest.md
   DEVELOPER_SNIPPETS_PATH: developer/python-pytest.md
-  TEST_COMMANDS: 'pytest
+  TEST_COMMANDS: |-
+    pytest
 
-    '
+    # E2E gegen geteilte HA-Testinstanz (Etikette: /home/hermes/ha-test/README.md)
+    /home/hermes/ha-test/bin/sync /home/hermes/repos/ha-go-gauge
+    /home/hermes/ha-test/bin/ha GET /api/states
   BUILD_COMMANDS: (kein Build)
   REQ_CATEGORIES: '- Kernfunktionalität (Sensoren, Coordinator)
 
