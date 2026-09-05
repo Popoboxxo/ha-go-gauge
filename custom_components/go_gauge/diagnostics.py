@@ -3,13 +3,14 @@
 Daniel-Debugging-Forderung (v0.6): Die Diagnose muss SOFORT zeigen,
 warum keine Daten ankommen - ohne Chat-Rueckfragen. Enthält:
 - Integration-Version + ConfigEntry-Version
-- Token-Fingerprint (erste 8 Zeichen, maskiert) zur Zuordnung
+- Token-Fingerprint (SHA-256-Hash, gekuerzt, nicht umkehrbar) zur Zuordnung
 - Letzter Abruf je Zyklus + Fehler
 - Workspace-Status mit note
 - Entity-Registry-Zuordnung
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
@@ -40,7 +41,12 @@ async def async_get_config_entry_diagnostics(
 
     data = coordinator.data or {}
     token = str(entry.data.get("token") or "")
-    token_fp = (token[:8] + "…") if token else "KEIN TOKEN HINTERLEGT!"
+    token_fp = (
+        hashlib.sha256(token.encode()).hexdigest()[:8]
+        if token
+        else "KEIN TOKEN HINTERLEGT!"
+    )
+    redacted_entry_data = async_redact_data(dict(entry.data), REDACT_KEYS)
 
     ws_states = [
         {
@@ -80,7 +86,7 @@ async def async_get_config_entry_diagnostics(
         "config_entry_version": entry.version,
         "entry_state": str(entry.state),
         "token_fingerprint": token_fp,
-        "workspace_name": entry.data.get("workspace_name"),
+        "workspace_name": redacted_entry_data.get("workspace_name"),
         "options": async_redact_data(dict(entry.options), REDACT_KEYS),
         "coordinator": {
             "last_update_success": coordinator.last_update_success,

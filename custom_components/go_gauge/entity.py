@@ -29,7 +29,7 @@ class GoGaugeEntityBase(CoordinatorEntity):
 
     def _ws(self, key: str) -> dict[str, Any] | None:
         for ws in self.coordinator.data.get("workspaces", []):
-            if ws["key"] == key:
+            if ws.get("key") == key:
                 return ws
         return None
 

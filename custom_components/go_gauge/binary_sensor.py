@@ -45,7 +45,8 @@ class RateLimitedBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_icon = "mdi:block-helper"
 
-    def __init__(self, coordinator, entry, *, key: str, win: str, ws_name: str) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
+                 key: str, win: str, ws_name: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
@@ -63,11 +64,14 @@ class RateLimitedBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
 
     @property
     def available(self) -> bool:
-        """Nicht verfuegbar (unavailable), wenn kein Abo - nicht einfach OFF."""
+        """Nicht verfuegbar (unavailable), wenn kein Abo oder Update fehlschlaegt.
+
+        Respektiert zusaetzlich den Coordinator-Update-Erfolg (super().available),
+        damit veraltete Daten nach einem fehlgeschlagenen Refresh nicht faelschlich
+        als verfuegbar angezeigt werden - nicht einfach OFF.
+        """
         ws = self._ws(self._key)
-        if ws and ws.get("status") == "no_subscription":
-            return False
-        return True
+        return super().available and not (ws and ws.get("status") == "no_subscription")
 
 
 class SubscriptionActiveBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
@@ -79,7 +83,8 @@ class SubscriptionActiveBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_icon = "mdi:shield-check-outline"
 
-    def __init__(self, coordinator, entry, *, key: str, ws_name: str) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
+                 key: str, ws_name: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._attr_unique_id = f"{entry.entry_id}_{key}_subscription_active"
@@ -107,7 +112,7 @@ class ApiReachableBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_api_reachable"
         self._attr_name = "Go Gauge API erreichbar"

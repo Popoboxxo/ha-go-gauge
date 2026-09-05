@@ -17,22 +17,24 @@ from typing import Any
 import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_WORKSPACE_NAME,
     DEFAULT_WARN_PERCENT,
     DOMAIN,
     USER_AGENT,
+    token_unique_id,
 )
 
 USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
 
 
-async def _probe_token(hass, token: str) -> tuple[bool, str | None]:
+async def _probe_token(hass: HomeAssistant, token: str) -> tuple[bool, str | None]:
     """Live-Check eines Tokens - nur fuer die Rueckmeldung, nicht zwingend."""
-    session = aiohttp.ClientSession()
+    session = async_get_clientsession(hass)
     try:
         async with session.get(
             USAGE_URL,
@@ -49,14 +51,12 @@ async def _probe_token(hass, token: str) -> tuple[bool, str | None]:
             return True, None
     except Exception:  # noqa: BLE001
         return False, "cannot_connect"
-    finally:
-        await session.close()
 
 
 class GoGaugeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Ein Workspace = eine Instanz: Name + Token."""
 
-    VERSION = 4
+    VERSION = 5
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         errors: dict[str, str] = {}
@@ -77,8 +77,10 @@ class GoGaugeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         warn = "cannot_connect_warn"  # Netz-Problem: Speichern erlaubt
                 if not errors:
                     # Eindeutige ID pro TOKEN (nicht pro Name) - gleicher Token
-                    # zweimal = echter Duplicate-Fall.
-                    await self.async_set_unique_id(f"go_gauge_{token[:16].lower()}")
+                    # zweimal = echter Duplicate-Fall. SHA-256-Hash statt
+                    # Klartext-Fragment, damit kein Token-Teil in HA-Storage /
+                    # Diagnostics landet (AUDIT-2026-09-04).
+                    await self.async_set_unique_id(token_unique_id(token))
                     self._abort_if_unique_id_configured()
                     title = f"Go Gauge {name}"
                     if warn:
@@ -112,12 +114,17 @@ class GoGaugeOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
             new_data = {**self.entry.data}
-            if user_input.pop("_rename_workspace", False):
-                pass  # Name kommt aus workspace_name Feld unten
             if user_input.get("workspace_name"):
                 new_data["workspace_name"] = user_input["workspace_name"].strip()
-            self.hass.config_entries.async_update_entry(self.entry, data=new_data)
             user_input.pop("workspace_name", None)
+            # Data (Rename) und Options in EINEM async_update_entry-Aufruf setzen:
+            # der OptionsFlowManager ruft nach async_create_entry() intern nochmal
+            # async_update_entry(entry, options=...) auf - da die Options hier
+            # bereits identisch gesetzt sind, erkennt HA keine Aenderung mehr und
+            # der zweite Aufruf feuert den Update-Listener (Reload) nicht erneut.
+            self.hass.config_entries.async_update_entry(
+                self.entry, data=new_data, options=user_input
+            )
             return self.async_create_entry(title="", data=user_input)
 
         opts = self.entry.options

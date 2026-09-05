@@ -59,23 +59,6 @@ async def async_setup_entry(
         entities.append(LiveModelsCountSensor(coordinator, entry))
         entities.append(CheapestModelSensor(coordinator, entry))
         entities.append(FreeModelsSensor(coordinator, entry))
-        # Settings-Entities ebenfalls NUR vom Owner (sonst Duplikate)
-        try:
-            from .number import (
-                ModelsRefreshMinutesNumber,
-                UsageRefreshMinutesNumber,
-                WarnPercentNumber,
-            )
-            from .switch import AutoUpdateModelsSwitch, AutoUpdateUsageSwitch
-            entities.extend([
-                WarnPercentNumber(coordinator, entry),
-                UsageRefreshMinutesNumber(coordinator, entry),
-                ModelsRefreshMinutesNumber(coordinator, entry),
-                AutoUpdateUsageSwitch(coordinator, entry),
-                AutoUpdateModelsSwitch(coordinator, entry),
-            ])
-        except ImportError:  # pragma: no cover
-            _LOGGER.warning("Go Gauge: Settings-Plattformen nicht ladbar")
 
     async_add_entities(entities)
 
@@ -95,8 +78,8 @@ class UsagePercentSensor(GoGaugeEntityBase, SensorEntity):
     _attr_native_unit_of_measurement = "%"
     _attr_icon = "mdi:speedometer"
 
-    def __init__(self, coordinator, entry, *, key: str, win: str, label: str,
-                 ws_name: str) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
+                 key: str, win: str, label: str, ws_name: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
@@ -150,8 +133,8 @@ class ResetTimestampSensor(GoGaugeEntityBase, SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:timer-reset"
 
-    def __init__(self, coordinator, entry, *, key: str, win: str, label: str,
-                 ws_name: str) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
+                 key: str, win: str, label: str, ws_name: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
@@ -180,10 +163,16 @@ class ModelCatalogSensor(GoGaugeEntityBase, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:format-list-bulleted"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_model_catalog"
         self._attr_name = "Go Gauge Modelle"
+        # Cache fuer extra_state_attributes, invalidiert ueber
+        # "models_updated_at" (aendert sich nur bei echtem Modell-Refresh,
+        # nicht bei jedem Coordinator-Poll) - vermeidet dict-Copy +
+        # json.dumps bei jedem Attribut-Zugriff (Audit 2026-09-04).
+        self._attrs_cache_key: Any = None
+        self._attrs_cache: dict[str, Any] | None = None
 
     @property
     def native_value(self) -> int | None:
@@ -193,7 +182,12 @@ class ModelCatalogSensor(GoGaugeEntityBase, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        block = dict(self.coordinator.data.get("models_block") or {})
+        block_raw = self.coordinator.data.get("models_block") or {}
+        cache_key = block_raw.get("models_updated_at")
+        if cache_key is not None and cache_key == self._attrs_cache_key and self._attrs_cache is not None:
+            return self._attrs_cache
+
+        block = dict(block_raw)
         models = block.pop("models", [])
         attrs: dict[str, Any] = {
             "models_updated_at": block.get("models_updated_at"),
@@ -213,6 +207,9 @@ class ModelCatalogSensor(GoGaugeEntityBase, SensorEntity):
         }
         # Kompletter Katalog als JSON-String (Templates/LoV-freundlich)
         attrs["catalog_json"] = json.dumps(models, ensure_ascii=False)
+
+        self._attrs_cache_key = cache_key
+        self._attrs_cache = attrs
         return attrs
 
 
@@ -222,7 +219,7 @@ class LiveModelsCountSensor(GoGaugeEntityBase, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:check-network-outline"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_models_live_count"
         self._attr_name = "Go Gauge Live-Modelle"
@@ -238,7 +235,7 @@ class CheapestModelSensor(GoGaugeEntityBase, SensorEntity):
 
     _attr_icon = "mdi:crown-outline"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_cheapest_model"
         self._attr_name = "Go Gauge Günstigstes Modell"
@@ -259,7 +256,7 @@ class CheapestModelSensor(GoGaugeEntityBase, SensorEntity):
 class FreeModelsSensor(GoGaugeEntityBase, SensorEntity):
     _attr_icon = "mdi:gift-outline"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_free_models"
         self._attr_name = "Go Gauge Free-Modelle"

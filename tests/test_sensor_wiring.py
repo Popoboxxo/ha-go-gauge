@@ -14,28 +14,13 @@ the old offline test did) so a future argument-order regression fails here.
 import asyncio
 import importlib.util
 import sys
-import types
 from pathlib import Path
 
+# Base homeassistant.* module fakes (incl. the _Flexible ModuleType helper)
+# are installed centrally in tests/conftest.py, which pytest always imports
+# before collecting this file - see conftest.py docstring for why.
+
 BASE = Path(__file__).resolve().parent.parent / "custom_components" / "go_gauge"
-
-
-class _Flexible(types.ModuleType):
-    def __getattr__(self, name):
-        if name.startswith("__"):
-            raise AttributeError(name)
-        return type(name, (), {})
-
-
-for _name in [
-    "homeassistant", "homeassistant.core", "homeassistant.helpers",
-    "homeassistant.helpers.aiohttp_client", "homeassistant.helpers.update_coordinator",
-    "homeassistant.helpers.entity_platform", "homeassistant.components",
-    "homeassistant.components.sensor", "homeassistant.config_entries",
-    "homeassistant.data_entry_flow", "voluptuous", "aiohttp",
-]:
-    sys.modules[_name] = _Flexible(_name)
-sys.modules["homeassistant"].__path__ = []
 
 
 def _class_getitem(cls, item):

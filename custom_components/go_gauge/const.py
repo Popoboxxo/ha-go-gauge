@@ -1,14 +1,30 @@
 """Constants for Go Gauge HA."""
 from __future__ import annotations
+
+import hashlib
 from typing import Any
 
 DOMAIN = "go_gauge"
 
+
+def token_unique_id(token: str) -> str:
+    """Return the ConfigEntry ``unique_id`` derived from an API token.
+
+    Uses a SHA-256 hash (first 16 hex chars) instead of a plaintext token
+    fragment, so no part of the secret is ever persisted in HA storage or
+    leaked via diagnostics / support exports (see AUDIT-2026-09-04).
+
+    Single source of truth shared by ``config_flow`` (entry creation) and
+    ``__init__`` (migration) so both derive identical IDs without duplicating
+    the formula. The same token always yields the same id (HA duplicate
+    detection); note this is case-sensitive, unlike the pre-v5 formula.
+    """
+    digest = hashlib.sha256(token.encode()).hexdigest()[:16]
+    return f"{DOMAIN}_{digest}"
+
 MANUFACTURER = "Popoboxxo"
 MODEL = "OpenCode Go"
 
-CONF_HOST = "host"
-CONF_PORT = "port"
 CONF_WARN_PERCENT = "warn_percent"
 CONF_WORKSPACE_NAME = "workspace_name"
 CONF_AUTO_UPDATE_USAGE = "auto_update_usage"
@@ -16,8 +32,6 @@ CONF_USAGE_REFRESH_MINUTES = "usage_refresh_minutes"
 CONF_AUTO_UPDATE_MODELS = "auto_update_models"
 CONF_MODELS_REFRESH_MINUTES = "models_refresh_minutes"
 
-DEFAULT_HOST = "172.20.5.120"
-DEFAULT_PORT = 8765
 DEFAULT_WARN_PERCENT = 80
 DEFAULT_SCAN_INTERVAL = 600  # seconds (legacy)
 DEFAULT_USAGE_REFRESH_MINUTES = 10

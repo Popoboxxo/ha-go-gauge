@@ -12,7 +12,11 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_USAGE_REFRESH_MINUTES, CONF_WORKSPACE_NAME, DOMAIN
+from .const import (
+    CONF_USAGE_REFRESH_MINUTES,
+    DOMAIN,
+    token_unique_id,
+)
 from .coordinator import GoGaugeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,19 +25,26 @@ PLATFORMS = ["sensor", "binary_sensor", "button", "switch", "number"]
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate old config-entry versions to current (VERSION = 4).
+    """Migrate old config-entry versions to current (VERSION = 5).
 
     v1/v2: Monitor-Ara (host/port) -> token-basiert
     v3:    Multi-Token-Liste       -> EIN Workspace pro Instanz:
            erster Token bleibt, Name = 'WS <slot>' (User benennt um).
+    v4:    ConfigEntry.unique_id war ein 16-Zeichen-Klartext-Fragment des
+           Tokens -> SHA-256-Hash, damit kein Token-Teil in HA-Storage /
+           Diagnostics persistiert wird (AUDIT-2026-09-04).
     """
-    if entry.version > 4:
+    if entry.version > 5:
         return False
 
-    _LOGGER.info("Go Gauge: migriere Config-Entry von Version %s auf 4", entry.version)
+    _LOGGER.info(
+        "Go Gauge: migriere Config-Entry %s von Version %s auf 5",
+        entry.entry_id, entry.version,
+    )
 
     data = {**entry.data}
     options = {**entry.options}
+    new_unique_id = entry.unique_id
 
     if entry.version < 3:
         # Monitor-Ara: nur Tokens uebernehmen falls vorhanden
@@ -55,16 +66,25 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         }
         entry.version = 4
 
-    hass.config_entries.async_update_entry(entry, data=data, options=options)
+    if entry.version < 5:
+        # Klartext-Token-Fragment in der unique_id durch SHA-256-Hash ersetzen.
+        # Aus dem gespeicherten Token neu berechnen, damit die ID exakt der
+        # entspricht, die der Config-Flow jetzt erzeugt. Idempotent/defensiv:
+        # ohne Token bleibt die bestehende unique_id unveraendert (keine
+        # Exception); bei erneutem Lauf greift diese Stufe nicht mehr.
+        token = str(data.get("token") or "")
+        if token:
+            new_unique_id = token_unique_id(token)
+        entry.version = 5
+
+    hass.config_entries.async_update_entry(
+        entry, data=data, options=options, unique_id=new_unique_id
+    )
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up one Go Gauge workspace instance."""
-    from .const import (
-        CONF_USAGE_REFRESH_MINUTES,
-    )
-
     token: str = str(entry.data.get("token") or "")
     ws_name: str = str(entry.data.get("workspace_name") or "").strip()
 
