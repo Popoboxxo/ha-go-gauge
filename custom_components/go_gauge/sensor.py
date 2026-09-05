@@ -193,15 +193,23 @@ class ModelCatalogSensor(GoGaugeEntityBase, SensorEntity):
             "models_updated_at": block.get("models_updated_at"),
             "count": len(models),
             "live_count": sum(1 for m in models if m.get("live")),
-            "free_models": [m["id"] for m in models if m.get("free")],
+            # Free/Günstigstes kommen aus dem Coordinator-Block: dort sind
+            # bereits nicht mehr live gelistete Modelle rausgefiltert (Fix
+            # 2026-09-05) - hier NICHT neu über die volle models-Liste
+            # rechnen, sonst tauchen tote Modelle wieder auf.
+            "free_models": block.get("free_models") or [],
             "cheapest_model": block.get("cheapest_model"),
             "cheapest_overall": block.get("cheapest_overall"),
-            # Sortiert nach Kosten-Nutzen-Ratio (billigste zuerst)
+            # Sortiert nach Kosten-Nutzen-Ratio (billigste zuerst); nur
+            # live-gelistete Modelle (live:False = PRICING-Altlast ignoriert)
             "ranking_by_cost": [
                 {"id": m["id"], "usd_per_1m_mixed": m.get("usd_per_1m_mixed"),
-                 "month_req_per_usd": m.get("month_req_per_usd"), "free": m.get("free")}
+                 "month_req_per_usd": m.get("month_req_per_usd"),
+                 "free": m.get("free"), "live": m.get("live")}
                 for m in sorted(
-                    [m for m in models if m.get("usd_per_1m_mixed") is not None],
+                    [m for m in models
+                     if m.get("usd_per_1m_mixed") is not None
+                     and m.get("live") is not False],
                     key=lambda m: m["usd_per_1m_mixed"])
             ],
         }

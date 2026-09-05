@@ -126,7 +126,15 @@ def _parse_reset(resets_at: str | None) -> datetime | None:
 
 
 def build_models_block(live_ids: list[str] | None) -> dict[str, Any]:
-    """Workspace-independent model catalog (one JSON blob for one sensor)."""
+    """Workspace-independent model catalog (one JSON blob for one sensor).
+
+    Fix 2026-09-05 (User-Report): Free/cheapest/ranking werden NUR ueber
+    live-gelistete Modelle berechnet. Ein statisch in PRICING gepflegtes
+    Modell, das die API nicht mehr listet (z. B. ox-alpha-free), bleibt
+    zwar im Katalog-Listing sichtbar (live: false), darf aber Free-Modelle/
+    Günstigstes nicht mehr belegen. Bei live_ids=None (noch nie erfolgreich
+    geladen) ist kein Live-Filter moeglich -> vorheriges Verhalten.
+    """
     known = set(PRICING.keys())
     models = []
     for mid in sorted(set(live_ids or []) | known):
@@ -138,8 +146,9 @@ def build_models_block(live_ids: list[str] | None) -> dict[str, Any]:
             "pricing_known": p is not None,
             **(efficiency(p) or {}),
         })
+    usable = [m for m in models if m.get("live") is not False]
     ranked = sorted(
-        [m for m in models if m.get("usd_per_1m_mixed") is not None],
+        [m for m in usable if m.get("usd_per_1m_mixed") is not None],
         key=lambda m: m["usd_per_1m_mixed"],
     )
     paid_ranked = [m for m in ranked if not m["free"]]
@@ -149,7 +158,7 @@ def build_models_block(live_ids: list[str] | None) -> dict[str, Any]:
         "cheapest_model": paid_ranked[0]["id"] if paid_ranked else None,
         "cheapest_overall": ranked[0]["id"] if ranked else None,
         "cheapest_ratio": (paid_ranked[0].get("usd_per_1m_mixed") if paid_ranked else None),
-        "free_models": [m["id"] for m in models if m["free"]],
+        "free_models": [m["id"] for m in usable if m["free"]],
         "models_updated_at": datetime.now(timezone.utc).isoformat(),
     }
 

@@ -258,6 +258,11 @@ def test_build_models_block_empty_live_ids():
     model_ids = {m["id"] for m in result["models"]}
     assert "grok-4.5" in model_ids
     assert "ox-alpha-free" in model_ids
+    # Fix 2026-09-05: explizit LEERE Live-Liste = nichts live ->
+    # Free/cheapest leer statt PRICING-Altlasten zu zeigen
+    assert result["free_models"] == []
+    assert result["cheapest_model"] is None
+    assert result["cheapest_overall"] is None
 
 
 def test_build_models_block_live_ids_in_models():
@@ -279,6 +284,8 @@ def test_build_models_block_none_live_ids():
     # All models should have live=None (unknown)
     for model in result["models"]:
         assert model["live"] is None
+    # Legacy-Fallback ohne Live-Daten: Free-Modelle kommen aus PRICING
+    assert "ox-alpha-free" in result["free_models"]
 
 
 def test_build_models_block_free_models_identified():
@@ -291,7 +298,8 @@ def test_build_models_block_free_models_identified():
 
 def test_build_models_block_ranking_by_cost():
     """[REQ-009] build_models_block returns cheapest_model (paid, ranked by cost)."""
-    result = coord.build_models_block([])
+    # Keine Live-Daten (None) -> Ranking ueber alle PRICING-Modelle
+    result = coord.build_models_block(None)
     # The function identifies cheapest_model (lowest cost among paid models)
     # and cheapest_overall (including free). Both should exist in PRICING.
     assert result["cheapest_model"] is not None  # At least one paid model exists
@@ -310,6 +318,27 @@ def test_build_models_block_ranking_by_cost():
     assert (cheapest_overall.get("usd_per_1m_mixed") or 0) <= (cheapest_paid.get("usd_per_1m_mixed") or 999)
 
 
+def test_build_models_block_dead_model_excluded_from_free_and_cheapest():
+    """[REQ-009] Fix 2026-09-05: PRICING-Modell ohne Live-Eintrag ignoriert.
+
+    Reproduziert den User-Report: ox-alpha-free war in PRICING als free
+    hinterlegt, wird aber von der API nicht mehr gelistet - die Sensoren
+    Free-Modelle/Günstigstes (cheapest_overall) durften ihn daraufhin
+    nicht mehr zeigen. Günstigstes (bezahlt) bleibt muse-spark.
+    """
+    result = coord.build_models_block(["muse-spark-1.2-contributor"])
+    # Katalog-Listing behält den Altlast transparent (live: false)
+    dead = next((m for m in result["models"] if m["id"] == "ox-alpha-free"), None)
+    assert dead is not None
+    assert dead["live"] is False
+    # ... aber NICHT mehr in free_models / cheapest_overall
+    assert "ox-alpha-free" not in result["free_models"]
+    assert result["free_models"] == []
+    assert result["cheapest_overall"] == "muse-spark-1.2-contributor"
+    assert result["cheapest_model"] == "muse-spark-1.2-contributor"
+    assert result["cheapest_ratio"] == 0.12  # 0.8*0.10 + 0.2*0.20
+
+
 def test_build_models_block_cheapest_model_paid():
     """[REQ-009] cheapest_model ignores free models, uses paid ranking."""
     result = coord.build_models_block(["ox-alpha-free", "muse-spark-1.2-contributor"])
@@ -323,10 +352,12 @@ def test_build_models_block_cheapest_overall_free_model():
     """[REQ-009] cheapest_overall picks free model if available."""
     result = coord.build_models_block(["ox-alpha-free"])
     assert result["cheapest_overall"] == "ox-alpha-free"
-    # Even with only free model, build_models_block includes ALL known models from PRICING,
-    # so there will be paid models available and cheapest_model won't be None.
-    # Verify that cheapest_model is the cheapest PAID model (muse-spark)
-    assert result["cheapest_model"] == "muse-spark-1.2-contributor"
+    # Fix 2026-09-05: nur ox-alpha-free ist live -> kein bezahltes Modell
+    # live -> cheapest_model None (PRICING-Altlasten fuellen nichts mehr)
+    assert result["cheapest_model"] is None
+    # Sobald muse-spark ebenfalls live ist, ist es das guenstigste bezahlte
+    result2 = coord.build_models_block(["ox-alpha-free", "muse-spark-1.2-contributor"])
+    assert result2["cheapest_model"] == "muse-spark-1.2-contributor"
 
 
 def test_build_models_block_cheapest_overall_no_pricing_data():

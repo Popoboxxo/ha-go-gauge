@@ -165,6 +165,38 @@ class TestModelCatalogSensor:
         assert ranking[1]["id"] == "mid"
         assert ranking[2]["id"] == "expensive"
 
+    def test_catalog_ranking_excludes_dead_models(self):
+        """Fix 2026-09-05: live:False-Modelle (PRICING-Altlasten) im Ranking raus."""
+        coordinator = _FakeCoordinator({
+            "models_block": {
+                "models": [
+                    {"id": "live-cheap", "live": True, "free": False,
+                     "usd_per_1m_mixed": 0.01},
+                    {"id": "dead-model", "live": False, "free": True,
+                     "usd_per_1m_mixed": 0.0},
+                ],
+                "model_count_live": 1,
+                "cheapest_model": "live-cheap",
+                "cheapest_overall": "live-cheap",
+                "free_models": [],
+                "models_updated_at": datetime.now(),
+                "cheapest_ratio": 0.01,
+            },
+            "workspaces": [],
+        })
+        entry = _FakeEntry()
+        cat = sensor.ModelCatalogSensor(coordinator, entry)
+        cat.coordinator = coordinator
+
+        attrs = cat.extra_state_attributes
+        # block-Werte werden relaisiert (Coordinator filtert bereits)
+        assert attrs["free_models"] == []
+        assert attrs["cheapest_overall"] == "live-cheap"
+        # Ranking: dead-model (live False) raus, live-cheap rein
+        ranking = attrs["ranking_by_cost"]
+        assert [r["id"] for r in ranking] == ["live-cheap"]
+        assert ranking[0]["live"] is True
+
     def test_catalog_empty(self):
         """native_value returns None when models list is empty or missing."""
         coordinator = _FakeCoordinator({
