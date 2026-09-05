@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
+from .coordinator import GoGaugeCoordinator
 from .entity import GoGaugeEntityBase
 
 _LOGGER = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: GoGaugeCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities([RefreshButton(coordinator, entry)])
 
 
@@ -30,7 +31,7 @@ class RefreshButton(GoGaugeEntityBase, ButtonEntity):
     _attr_icon = "mdi:refresh"
     _attr_name = "Go Gauge Aktualisieren"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_refresh"
 

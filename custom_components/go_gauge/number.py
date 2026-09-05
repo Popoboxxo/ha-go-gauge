@@ -21,7 +21,7 @@ from .entity import GoGaugeEntityBase, persist_options
 _LOGGER = logging.getLogger(__name__)
 
 
-def _with_ws(coordinator, base: str) -> str:
+def _with_ws(coordinator: GoGaugeCoordinator, base: str) -> str:
     ws = getattr(coordinator, "ws_name", "") or "WS 1"
     return f"{base} · {ws}" if ws else base
 
@@ -44,7 +44,8 @@ class _SettingNumber(GoGaugeEntityBase, NumberEntity):
 
     _attr_mode = NumberMode.BOX
 
-    def __init__(self, coordinator, entry, *, unique_suffix: str, name: str,
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
+                 unique_suffix: str, name: str,
                  min_value: int, max_value: int) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_{unique_suffix}"
@@ -60,7 +61,7 @@ class WarnPercentNumber(_SettingNumber):
     _attr_icon = "mdi:alert-octagon-outline"
     _attr_native_unit_of_measurement = "%"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="warn_percent",
                          name=f"{_with_ws(coordinator, 'Go Gauge Warnschwelle')}",
@@ -82,7 +83,7 @@ class UsageRefreshMinutesNumber(_SettingNumber):
     _attr_icon = "mdi:timer-outline"
     _attr_native_unit_of_measurement = "min"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="usage_refresh_minutes",
                          name=f"{_with_ws(coordinator, 'Go Gauge Nutzung Refresh (Minuten)')}",
@@ -105,7 +106,7 @@ class ModelsRefreshMinutesNumber(_SettingNumber):
     _attr_icon = "mdi:timer-outline"
     _attr_native_unit_of_measurement = "min"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="models_refresh_minutes",
                          name=f"{_with_ws(coordinator, 'Go Gauge Modelle Refresh (Minuten)')}",

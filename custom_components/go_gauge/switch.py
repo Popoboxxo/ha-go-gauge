@@ -33,7 +33,7 @@ class AutoUpdateUsageSwitch(GoGaugeEntityBase, SwitchEntity):
 
     _attr_icon = "mdi:autorenew"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         ws = getattr(coordinator, "ws_name", "") or "WS 1"
         self._attr_unique_id = f"{entry.entry_id}_auto_update_usage"
@@ -61,7 +61,7 @@ class AutoUpdateModelsSwitch(GoGaugeEntityBase, SwitchEntity):
 
     _attr_icon = "mdi:autorenew"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         ws = getattr(coordinator, "ws_name", "") or "WS 1"
         self._attr_unique_id = f"{entry.entry_id}_auto_update_models"

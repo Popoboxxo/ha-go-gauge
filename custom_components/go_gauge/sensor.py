@@ -78,8 +78,8 @@ class UsagePercentSensor(GoGaugeEntityBase, SensorEntity):
     _attr_native_unit_of_measurement = "%"
     _attr_icon = "mdi:speedometer"
 
-    def __init__(self, coordinator, entry, *, key: str, win: str, label: str,
-                 ws_name: str) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
+                 key: str, win: str, label: str, ws_name: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
@@ -133,8 +133,8 @@ class ResetTimestampSensor(GoGaugeEntityBase, SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:timer-reset"
 
-    def __init__(self, coordinator, entry, *, key: str, win: str, label: str,
-                 ws_name: str) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
+                 key: str, win: str, label: str, ws_name: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
@@ -163,7 +163,7 @@ class ModelCatalogSensor(GoGaugeEntityBase, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:format-list-bulleted"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_model_catalog"
         self._attr_name = "Go Gauge Modelle"
@@ -205,7 +205,7 @@ class LiveModelsCountSensor(GoGaugeEntityBase, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:check-network-outline"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_models_live_count"
         self._attr_name = "Go Gauge Live-Modelle"
@@ -221,7 +221,7 @@ class CheapestModelSensor(GoGaugeEntityBase, SensorEntity):
 
     _attr_icon = "mdi:crown-outline"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_cheapest_model"
         self._attr_name = "Go Gauge Günstigstes Modell"
@@ -242,7 +242,7 @@ class CheapestModelSensor(GoGaugeEntityBase, SensorEntity):
 class FreeModelsSensor(GoGaugeEntityBase, SensorEntity):
     _attr_icon = "mdi:gift-outline"
 
-    def __init__(self, coordinator, entry) -> None:
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_free_models"
         self._attr_name = "Go Gauge Free-Modelle"
