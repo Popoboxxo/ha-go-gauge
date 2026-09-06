@@ -185,3 +185,7 @@ conventions-preset: default
 debug-mode: false
 # Allow sync.py to write files containing detected secrets to committed (non-gitignored) paths. Default: false — sync aborts with an error when a secret is detected in a committed file. Set to true only when you deliberately commit secret-looking values (e.g. static demo tokens). NOT recommended for production projects.
 allow-committed-secrets: false
+# Per-provider main-chat inheritance: agents get no `model:` field and inherit
+# the main-chat model at runtime. Mutually exclusive with model-override-all.
+model-inherit-main-chat:
+  Opencode: true
