@@ -245,7 +245,11 @@ class TestUsagePercentSensor:
         assert pct.native_value == 42.5
 
     def test_usage_percent_no_subscription_status(self):
-        """native_value returns 'Kein Abo' string when status='no_subscription'."""
+        """Fix 2026-09-06: 'no_subscription' -> None (nie Status-String).
+
+        Ein MEASUREMENT/%-Sensor mit String-State wird von aktuellem HA
+        beim Hinzufuegen hart abgelehnt (Live-Test HA 2026.9, ValueError).
+        """
         coordinator = _FakeCoordinator({
             "workspaces": [
                 {
@@ -264,10 +268,12 @@ class TestUsagePercentSensor:
         )
         pct.coordinator = coordinator
 
-        assert pct.native_value == "Kein Abo"
+        value = pct.native_value
+        assert value is None
+        assert isinstance(value, (int, float)) or value is None
 
     def test_usage_percent_error_status(self):
-        """native_value returns 'Fehler' string when status='error'."""
+        """Fix 2026-09-06: 'error' -> None (nie Status-String, siehe oben)."""
         coordinator = _FakeCoordinator({
             "workspaces": [
                 {
@@ -286,7 +292,9 @@ class TestUsagePercentSensor:
         )
         pct.coordinator = coordinator
 
-        assert pct.native_value == "Fehler"
+        value = pct.native_value
+        assert value is None
+        assert isinstance(value, (int, float)) or value is None
 
     def test_usage_percent_missing_window(self):
         """native_value returns None when window key doesn't exist."""

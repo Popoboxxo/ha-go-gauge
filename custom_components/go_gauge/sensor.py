@@ -70,8 +70,13 @@ def _display_name(name: str) -> str:
 class UsagePercentSensor(GoGaugeEntityBase, SensorEntity):
     """Percent usage of one workspace window (5h/week/month).
 
-    Bei 'no_subscription' (kein aktives Abo) zeigt der Sensor den Status
-    direkt als State - nicht 'Unbekannt'.
+    Fix 2026-09-06 (Live-Test HA 2026.9): Bei 'no_subscription'/'error'
+    KEINE Status-Strings ('Kein Abo'/'Fehler') als State - ein
+    MEASUREMENT/%-Sensor mit String-State wird von aktuellem HA beim
+    Hinzufuegen hart abgelehnt (ValueError, Entity fehlt komplett).
+    Stattdessen None (= unbekannt); der Status bleibt ueber Icon
+    (shield-off) + Attribute (status/note) + Abo-/API-Binary-Sensoren
+    sichtbar. Statistiken (%-Verlauf) bleiben so erhalten.
     """
 
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -91,15 +96,12 @@ class UsagePercentSensor(GoGaugeEntityBase, SensorEntity):
         return ws.get("status") if ws else None
 
     @property
-    def native_value(self) -> float | str | None:
+    def native_value(self) -> float | None:
         ws = self._ws(self._key)
         if not ws:
             return None
-        status = ws.get("status")
-        if status == "no_subscription":
-            return "Kein Abo"
-        if status == "error":
-            return "Fehler"
+        if ws.get("status") in ("no_subscription", "error"):
+            return None
         blk = (ws.get("windows") or {}).get(self._win) or {}
         pct = blk.get("percent")
         return float(pct) if isinstance(pct, (int, float)) else None
