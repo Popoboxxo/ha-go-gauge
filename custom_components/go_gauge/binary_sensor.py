@@ -14,7 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, WINDOW_LABELS
 from .coordinator import GoGaugeCoordinator
-from .entity import GoGaugeEntityBase
+from .entity import GoGaugeAccountEntityBase, GoGaugeEntityBase
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ class SubscriptionActiveBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
         return {"workspace_key": self._key, "note": (ws or {}).get("note")}
 
 
-class ApiReachableBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
+class ApiReachableBinarySensor(GoGaugeAccountEntityBase, BinarySensorEntity):
     """ON while the opencode.ai API delivers fresh data."""
 
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY

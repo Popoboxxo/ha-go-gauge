@@ -20,9 +20,10 @@ class GoGaugeEntityBase(CoordinatorEntity):
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._entry = entry
+        ws_name = getattr(coordinator, "ws_name", "") or "WS 1"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
-            "name": "Go Gauge HA",
+            "name": f"Go Gauge {ws_name}",
             "manufacturer": MANUFACTURER,
             "model": MODEL,
         }
@@ -32,6 +33,25 @@ class GoGaugeEntityBase(CoordinatorEntity):
             if ws.get("key") == key:
                 return ws
         return None
+
+
+class GoGaugeAccountEntityBase(GoGaugeEntityBase):
+    """Workspace-independent entities (model catalog, API reachability).
+
+    Own device ('Go Gauge Konto'), identified by a fixed key instead of the
+    catalog-owner's entry_id - so it stays visually separate from any one
+    workspace's device even though the catalog owner's config entry is what
+    creates it (see __init__.py is_catalog_owner).
+    """
+
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, "account")},
+            "name": "Go Gauge Konto",
+            "manufacturer": MANUFACTURER,
+            "model": MODEL,
+        }
 
 
 def persist_options(hass: HomeAssistant, entry: ConfigEntry,

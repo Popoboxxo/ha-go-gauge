@@ -29,6 +29,7 @@ from .const import (
     DOMAIN,
     PRICING,
     USER_AGENT,
+    WINDOW_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -74,6 +75,56 @@ def efficiency(prices: dict[str, Any] | None) -> dict[str, Any] | None:
         "month_req_per_usd": round(rpd, 1) if rpd else None,
         "free": False,
     }
+
+
+def window_elapsed_fraction(win: str, resets_at: datetime | None,
+                             now: datetime | None = None) -> float | None:
+    """Fraction of the window elapsed so far, 0 < f <= 1; None if unknown.
+
+    None right after a reset (elapsed <= 0) - dividing by a near-zero
+    fraction would blow the forecast up into meaningless numbers.
+    """
+    if resets_at is None:
+        return None
+    total = WINDOW_SECONDS.get(win)
+    if not total:
+        return None
+    now = now or datetime.now(timezone.utc)
+    remaining = (resets_at - now).total_seconds()
+    elapsed = total - remaining
+    if elapsed <= 0:
+        return None
+    return min(elapsed / total, 1.0)
+
+
+def forecast_percent(ws: dict[str, Any] | None, win: str,
+                      now: datetime | None = None) -> float | None:
+    """Linear pace projection: current percent extrapolated to window end."""
+    if not ws or ws.get("status") in ("no_subscription", "error"):
+        return None
+    blk = (ws.get("windows") or {}).get(win) or {}
+    pct = blk.get("percent")
+    if not isinstance(pct, (int, float)):
+        return None
+    frac = window_elapsed_fraction(win, blk.get("resets_at"), now)
+    if not frac:
+        return None
+    return round(pct / frac, 1)
+
+
+def pace_status(forecast_pct: float, green_below: float, red_above: float) -> str:
+    """green/yellow/red vs. the two configurable thresholds.
+
+    Clamp red_above >= green_below defensively - a misconfigured Number
+    entity (red below green) just collapses the yellow band instead of
+    inverting green/red.
+    """
+    red_above = max(red_above, green_below)
+    if forecast_pct < green_below:
+        return "green"
+    if forecast_pct > red_above:
+        return "red"
+    return "yellow"
 
 
 class OpenCodeGoApiClient:
@@ -183,9 +234,16 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.auto_models = options.get(CONF_AUTO_UPDATE_MODELS, True)
         self.models_minutes = int(
             options.get(CONF_MODELS_REFRESH_MINUTES, DEFAULT_MODELS_REFRESH_MINUTES))
-        # Warnschwelle als Runtime-Attribut (Number-Entity schreibt sie live)
-        from .const import DEFAULT_WARN_PERCENT  # local import: no cycle at import time
+        # Warnschwelle + Ampel-Rot-Grenze als Runtime-Attribute (Number-Entities
+        # schreiben sie live)
+        from .const import (  # local import: no cycle at import time
+            CONF_PACE_RED_PERCENT,
+            DEFAULT_PACE_RED_PERCENT,
+            DEFAULT_WARN_PERCENT,
+        )
         self.warn_percent = int(options.get("warn_percent", DEFAULT_WARN_PERCENT))
+        self.pace_red_percent = int(
+            options.get(CONF_PACE_RED_PERCENT, DEFAULT_PACE_RED_PERCENT))
         # Flag: Runtime-Entities persistieren Optionen ohne Entry-Reload
         self._skip_reload = False
 
