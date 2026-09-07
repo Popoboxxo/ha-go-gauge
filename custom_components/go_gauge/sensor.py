@@ -22,8 +22,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, WINDOW_LABELS
-from .coordinator import GoGaugeCoordinator
-from .entity import GoGaugeEntityBase
+from .coordinator import GoGaugeCoordinator, forecast_percent, pace_status
+from .entity import GoGaugeAccountEntityBase, GoGaugeEntityBase
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +51,10 @@ async def async_setup_entry(
             entities.append(UsagePercentSensor(
                 coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
             entities.append(ResetTimestampSensor(
+                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
+            entities.append(UsageForecastSensor(
+                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
+            entities.append(UsagePaceSensor(
                 coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
 
     if getattr(coordinator, "is_catalog_owner", True):
@@ -153,7 +157,73 @@ class ResetTimestampSensor(GoGaugeEntityBase, SensorEntity):
         return val if isinstance(val, datetime) else None
 
 
-class ModelCatalogSensor(GoGaugeEntityBase, SensorEntity):
+class UsageForecastSensor(GoGaugeEntityBase, SensorEntity):
+    """Linear projection of the window's usage percent onto the full window.
+
+    forecast = percent / elapsed_fraction, elapsed_fraction = elapsed time
+    since window start / nominal window length (WINDOW_SECONDS). Can exceed
+    100% on purpose (Daniel-Feedback 2026-09-07) - that's the point, it
+    shows whether current pace will blow the budget before the window ends.
+    Right after a reset (elapsed_fraction ~ 0) the projection is undefined -
+    same "None instead of a fake number" pattern as UsagePercentSensor.
+    """
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "%"
+    _attr_icon = "mdi:trending-up"
+
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
+                 key: str, win: str, label: str, ws_name: str) -> None:
+        super().__init__(coordinator, entry)
+        self._key = key
+        self._win = win
+        self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_forecast"
+        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Prognose"
+
+    @property
+    def native_value(self) -> float | None:
+        return forecast_percent(self._ws(self._key), self._win)
+
+
+class UsagePaceSensor(GoGaugeEntityBase, SensorEntity):
+    """Ampel je Fenster: green/yellow/red je nach hochgerechnetem Prognose-%.
+
+    Grenzen kommen aus zwei Number-Entities (einheitlich fuer alle Fenster):
+    Warnschwelle = Gruen/Gelb-Grenze, Ampel-Rot-Grenze = Gelb/Rot-Grenze.
+    """
+
+    _attr_icon = "mdi:speedometer-medium"
+
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
+                 key: str, win: str, label: str, ws_name: str) -> None:
+        super().__init__(coordinator, entry)
+        self._key = key
+        self._win = win
+        self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_pace"
+        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Pace"
+
+    @property
+    def native_value(self) -> str | None:
+        forecast = forecast_percent(self._ws(self._key), self._win)
+        if forecast is None:
+            return None
+        return pace_status(forecast, self.coordinator.warn_percent,
+                            self.coordinator.pace_red_percent)
+
+    @property
+    def icon(self) -> str:
+        return {"green": "mdi:check-circle-outline",
+                "yellow": "mdi:alert-circle-outline",
+                "red": "mdi:close-circle-outline"}.get(self.native_value, "mdi:speedometer-medium")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"forecast_percent": forecast_percent(self._ws(self._key), self._win),
+                "green_below": self.coordinator.warn_percent,
+                "red_above": self.coordinator.pace_red_percent}
+
+
+class ModelCatalogSensor(GoGaugeAccountEntityBase, SensorEntity):
     """EIN Sensor fuer den kompletten Modell-Katalog (dynamisch via Attribute).
 
     State = Anzahl gelisteter Modelle. Attribute enthaelt das ganze Verzeichnis
@@ -223,7 +293,7 @@ class ModelCatalogSensor(GoGaugeEntityBase, SensorEntity):
         return attrs
 
 
-class LiveModelsCountSensor(GoGaugeEntityBase, SensorEntity):
+class LiveModelsCountSensor(GoGaugeAccountEntityBase, SensorEntity):
     """Live verfuegbare Modelle laut API."""
 
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -240,7 +310,7 @@ class LiveModelsCountSensor(GoGaugeEntityBase, SensorEntity):
         return block.get("model_count_live")
 
 
-class CheapestModelSensor(GoGaugeEntityBase, SensorEntity):
+class CheapestModelSensor(GoGaugeAccountEntityBase, SensorEntity):
     """Guenstigstes bezahltes Modell nach gemischtem $/1M."""
 
     _attr_icon = "mdi:crown-outline"
@@ -263,7 +333,7 @@ class CheapestModelSensor(GoGaugeEntityBase, SensorEntity):
         }
 
 
-class FreeModelsSensor(GoGaugeEntityBase, SensorEntity):
+class FreeModelsSensor(GoGaugeAccountEntityBase, SensorEntity):
     _attr_icon = "mdi:gift-outline"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:

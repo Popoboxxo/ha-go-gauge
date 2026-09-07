@@ -132,9 +132,11 @@ class GoGaugeOptionsFlowHandler(config_entries.OptionsFlow):
             CONF_AUTO_UPDATE_MODELS,
             CONF_AUTO_UPDATE_USAGE,
             CONF_MODELS_REFRESH_MINUTES,
+            CONF_PACE_RED_PERCENT,
             CONF_WARN_PERCENT,
             CONF_USAGE_REFRESH_MINUTES,
             DEFAULT_MODELS_REFRESH_MINUTES,
+            DEFAULT_PACE_RED_PERCENT,
             DEFAULT_USAGE_REFRESH_MINUTES,
         )
         schema = vol.Schema({
@@ -142,6 +144,8 @@ class GoGaugeOptionsFlowHandler(config_entries.OptionsFlow):
                          default=self.entry.data.get("workspace_name", "")): str,
             vol.Required(CONF_WARN_PERCENT,
                          default=opts.get(CONF_WARN_PERCENT, DEFAULT_WARN_PERCENT)): int,
+            vol.Required(CONF_PACE_RED_PERCENT,
+                         default=opts.get(CONF_PACE_RED_PERCENT, DEFAULT_PACE_RED_PERCENT)): int,
             vol.Required(CONF_AUTO_UPDATE_USAGE,
                          default=opts.get(CONF_AUTO_UPDATE_USAGE, True)): bool,
             vol.Required(CONF_USAGE_REFRESH_MINUTES,

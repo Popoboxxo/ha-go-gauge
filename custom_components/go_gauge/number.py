@@ -10,6 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     DEFAULT_MODELS_REFRESH_MINUTES,
+    DEFAULT_PACE_RED_PERCENT,
     DEFAULT_USAGE_REFRESH_MINUTES,
     DEFAULT_WARN_PERCENT,
     DOMAIN,
@@ -33,6 +34,7 @@ async def async_setup_entry(
     coordinator: GoGaugeCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities([
         WarnPercentNumber(coordinator, entry),
+        PaceRedPercentNumber(coordinator, entry),
         UsageRefreshMinutesNumber(coordinator, entry),
         ModelsRefreshMinutesNumber(coordinator, entry),
     ])
@@ -74,6 +76,28 @@ class WarnPercentNumber(_SettingNumber):
         self.coordinator.warn_percent = int(value)
         persist_options(self.hass, self._entry, self.coordinator,
                         warn_percent=int(value))
+
+
+class PaceRedPercentNumber(_SettingNumber):
+    """Gelb/Rot-Grenze der Pace-Ampel in Prozent (1..300)."""
+
+    _attr_icon = "mdi:alert-decagram-outline"
+    _attr_native_unit_of_measurement = "%"
+
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry,
+                         unique_suffix="pace_red_percent",
+                         name=f"{_with_ws(coordinator, 'Go Gauge Ampel Rot-Grenze')}",
+                         min_value=1, max_value=300)
+
+    @property
+    def native_value(self) -> float | None:
+        return getattr(self.coordinator, "pace_red_percent", DEFAULT_PACE_RED_PERCENT)
+
+    async def async_set_native_value(self, value: float) -> None:
+        self.coordinator.pace_red_percent = int(value)
+        persist_options(self.hass, self._entry, self.coordinator,
+                        pace_red_percent=int(value))
 
 
 class UsageRefreshMinutesNumber(_SettingNumber):

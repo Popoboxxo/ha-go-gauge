@@ -26,6 +26,7 @@ MANUFACTURER = "Popoboxxo"
 MODEL = "OpenCode Go"
 
 CONF_WARN_PERCENT = "warn_percent"
+CONF_PACE_RED_PERCENT = "pace_red_percent"
 CONF_WORKSPACE_NAME = "workspace_name"
 CONF_AUTO_UPDATE_USAGE = "auto_update_usage"
 CONF_USAGE_REFRESH_MINUTES = "usage_refresh_minutes"
@@ -33,11 +34,17 @@ CONF_AUTO_UPDATE_MODELS = "auto_update_models"
 CONF_MODELS_REFRESH_MINUTES = "models_refresh_minutes"
 
 DEFAULT_WARN_PERCENT = 80
+DEFAULT_PACE_RED_PERCENT = 100
 DEFAULT_SCAN_INTERVAL = 600  # seconds (legacy)
 DEFAULT_USAGE_REFRESH_MINUTES = 10
 DEFAULT_MODELS_REFRESH_MINUTES = 60
 
 WINDOW_LABELS = {"5h": "5h rolling", "week": "Weekly", "month": "Monthly"}
+
+# Nominal window length in seconds, used to project current pace onto the
+# rest of the window. "month" is an approximation (30 days) - die
+# opencode.ai-API liefert kein exaktes Kalendermonat-Fenster, nur resetsAt.
+WINDOW_SECONDS = {"5h": 5 * 3600, "week": 7 * 24 * 3600, "month": 30 * 24 * 3600}
 
 # Full browser UA - Cloudflare blocks non-browser agents (Error 1010)
 USER_AGENT = (
