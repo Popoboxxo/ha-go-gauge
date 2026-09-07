@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0] — 2026-09-07
+
+### Added
+
+- New "Go Gauge Konto" device for the workspace-independent entities (model catalog, live-model count, cheapest model, free models, API-reachable) — previously attached to the first workspace instance's device
+- Forecast sensor per workspace window (5h/week/month): linear pace projection of the current usage percent onto the full window (can exceed 100%)
+- Pace-status sensor per workspace window: green/yellow/red classification of the forecast, thresholds configurable via the existing "Warnschwelle" Number entity (green/yellow boundary) and a new "Ampel Rot-Grenze" Number entity (yellow/red boundary, default 100%)
+
+### Fixed
+
+- Every workspace device was hardcoded to the same name "Go Gauge HA" regardless of workspace — now shows "Go Gauge {workspace_name}"
+
+### Full Changelog
+
+https://github.com/Popoboxxo/ha-go-gauge/compare/v1.2.0...v1.3.0
+
 ## [1.2.0] — 2026-09-06
 
 ### Summary
