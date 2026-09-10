@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.4.0] — 2026-09-10
+
+### Summary
+
+Adds three derived usage sensors per workspace window (5h/week/month) on top
+of the existing usage/forecast/pace entities: the remaining budget percent,
+the time until the window resets, and the current burn rate in %/h. All three
+are computed on-read by pure kernel functions from the existing coordinator
+data plus an in-memory usage-sample history — no new polling, no reset jobs.
+
+### Added
+
+- `RemainingBudgetSensor` per window: `100 − used percent` (`sensor.go_gauge_<ws>_<window>_restbudget`); `None` for `no_subscription`/`error` instead of a misleading full budget
+- `TimeUntilResetSensor` per window: time to the window reset in hours as a HA `duration` entity, clamped at 0 (`..._restzeit`)
+- `BurnRateSensor` per window: consumption slope in %/h derived from the usage-sample history (`..._burn_rate`)
+- Coordinator records one `(timestamp, percent)` sample per workspace window per successful usage fetch; the history is fed to the burn-rate kernel on read
+
+### Design decisions
+
+- **Burn-rate lookback of 2 h.** Only samples from the last 2 hours feed the slope, and at least two samples spanning 5 minutes are required. This keeps the short 5h rolling window responsive while ignoring long-past consumption, and suppresses poll jitter below the 5-minute minimum span.
+- **Window reset clears the sample history.** A percent drop for the same window means the window rolled over; the stored history is cleared before appending the new sample, so the burn-rate never reports a bogus negative slope after a reset. The pure kernel additionally returns `None` on a negative slope as a defensive fallback.
+
+### Full Changelog
+
+https://github.com/Popoboxxo/ha-go-gauge/compare/v1.3.0...v1.4.0
+
 ## [1.3.0] — 2026-09-07
 
 ### Added

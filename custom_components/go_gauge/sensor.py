@@ -22,7 +22,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, WINDOW_LABELS
-from .coordinator import GoGaugeCoordinator, forecast_percent, pace_status
+from .coordinator import (
+    GoGaugeCoordinator,
+    burn_rate_per_hour,
+    forecast_percent,
+    pace_status,
+    remaining_percent,
+    seconds_until_reset,
+)
 from .entity import GoGaugeAccountEntityBase, GoGaugeEntityBase
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,6 +62,12 @@ async def async_setup_entry(
             entities.append(UsageForecastSensor(
                 coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
             entities.append(UsagePaceSensor(
+                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
+            entities.append(RemainingBudgetSensor(
+                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
+            entities.append(TimeUntilResetSensor(
+                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
+            entities.append(BurnRateSensor(
                 coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
 
     if getattr(coordinator, "is_catalog_owner", True):
@@ -221,6 +234,74 @@ class UsagePaceSensor(GoGaugeEntityBase, SensorEntity):
         return {"forecast_percent": forecast_percent(self._ws(self._key), self._win),
                 "green_below": self.coordinator.warn_percent,
                 "red_above": self.coordinator.pace_red_percent}
+
+
+class RemainingBudgetSensor(GoGaugeEntityBase, SensorEntity):
+    """Restbudget je Fenster: 100 - genutzte Prozent.
+
+    Inverse des Nutzungs-Sensors; None (nicht 100) bei fehlendem Abo/Fehler,
+    damit ein Restbudget nie als scheinbar volle Reserve erscheint.
+    """
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "%"
+    _attr_icon = "mdi:gauge"
+
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
+                 key: str, win: str, label: str, ws_name: str) -> None:
+        super().__init__(coordinator, entry)
+        self._key = key
+        self._win = win
+        self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_remaining"
+        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Restbudget"
+
+    @property
+    def native_value(self) -> float | None:
+        return remaining_percent(self._ws(self._key), self._win)
+
+
+class TimeUntilResetSensor(GoGaugeEntityBase, SensorEntity):
+    """Restzeit bis zum Fenster-Reset in Stunden (DURATION-Entity)."""
+
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = "h"
+    _attr_icon = "mdi:timer-sand"
+
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
+                 key: str, win: str, label: str, ws_name: str) -> None:
+        super().__init__(coordinator, entry)
+        self._key = key
+        self._win = win
+        self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_time_to_reset"
+        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Restzeit"
+
+    @property
+    def native_value(self) -> float | None:
+        seconds = seconds_until_reset(self._ws(self._key), self._win)
+        return seconds / 3600.0 if seconds is not None else None
+
+
+class BurnRateSensor(GoGaugeEntityBase, SensorEntity):
+    """Verbrauchstempo je Fenster in %/h (Steigung der letzten 2h)."""
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "%/h"
+    _attr_icon = "mdi:fire"
+
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
+                 key: str, win: str, label: str, ws_name: str) -> None:
+        super().__init__(coordinator, entry)
+        self._key = key
+        self._win = win
+        self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_burn_rate"
+        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Burn-Rate"
+
+    @property
+    def native_value(self) -> float | None:
+        # Defensive getattr: leichte Test-Doubles binden die Entities ohne
+        # echten Coordinator (kein _usage_samples) - dann None statt Crash.
+        samples = getattr(self.coordinator, "_usage_samples", {}) or {}
+        return burn_rate_per_hour(samples.get(f"{self._key}:{self._win}", []))
 
 
 class ModelCatalogSensor(GoGaugeAccountEntityBase, SensorEntity):

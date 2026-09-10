@@ -67,7 +67,8 @@ def _enum_like(*members):
 
 sys.modules["homeassistant.components.sensor"] = _Flexible("sensor")
 sys.modules["homeassistant.components.sensor"].SensorStateClass = _enum_like("measurement")
-sys.modules["homeassistant.components.sensor"].SensorDeviceClass = _enum_like("timestamp")
+sys.modules["homeassistant.components.sensor"].SensorDeviceClass = _enum_like(
+    "timestamp", "duration")
 
 BASE = str(Path(__file__).resolve().parent.parent / "custom_components" / "go_gauge")
 ENV_FILE = Path("/opt/data/opencode-go-monitor/.env")
