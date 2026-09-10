@@ -37,6 +37,14 @@ _LOGGER = logging.getLogger(__name__)
 MODELS_URL = "https://opencode.ai/zen/go/v1/models"
 USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
 
+# Burn-rate lookback window: only the last 2h of usage samples feed the
+# %/h slope. A full hour-plus of history keeps the slope stable across the
+# short 5h rolling window while still ignoring long-past consumption.
+BURN_RATE_LOOKBACK_SECONDS = 2 * 3600
+# Minimum time span between the oldest and newest sample for a meaningful
+# slope - below 5min the quotient amplifies poll jitter into noise.
+BURN_RATE_MIN_SPAN_SECONDS = 300
+
 BROWSER_HEADERS = {
     "User-Agent": USER_AGENT,
     "Accept": "application/json",
@@ -125,6 +133,70 @@ def pace_status(forecast_pct: float, green_below: float, red_above: float) -> st
     if forecast_pct > red_above:
         return "red"
     return "yellow"
+
+
+def remaining_percent(ws: dict[str, Any] | None, win: str) -> float | None:
+    """Restbudget of one workspace window: 100 - used percent.
+
+    None for a missing workspace, a no_subscription/error workspace and a
+    non-numeric percent - same "None instead of a fake number" pattern as
+    UsagePercentSensor (a MEASUREMENT/%-sensor must never carry a string).
+    """
+    if not ws or ws.get("status") in ("no_subscription", "error"):
+        return None
+    blk = (ws.get("windows") or {}).get(win) or {}
+    pct = blk.get("percent")
+    if not isinstance(pct, (int, float)):
+        return None
+    return 100.0 - float(pct)
+
+
+def seconds_until_reset(ws: dict[str, Any] | None, win: str,
+                        now: datetime | None = None) -> float | None:
+    """Seconds until the window resets, clamped at 0; None if unknown.
+
+    A stale resets_at in the past yields 0.0, never a negative duration.
+    """
+    if not ws:
+        return None
+    blk = (ws.get("windows") or {}).get(win)
+    if not blk:
+        return None
+    resets_at = blk.get("resets_at")
+    if not isinstance(resets_at, datetime):
+        return None
+    now = now or datetime.now(timezone.utc)
+    return max((resets_at - now).total_seconds(), 0.0)
+
+
+def burn_rate_per_hour(samples: list[tuple[datetime, float]] | None,
+                       now: datetime | None = None) -> float | None:
+    """Consumption slope in %/h over the recent sample history.
+
+    - Only samples within BURN_RATE_LOOKBACK_SECONDS of `now` are used.
+    - Needs at least two samples spanning BURN_RATE_MIN_SPAN_SECONDS.
+    - A negative slope means a window reset happened between samples and is
+      not a "rate" - returns None (the history recorder clears on reset, so
+      this is only a defensive fallback).
+    """
+    if not samples or len(samples) < 2:
+        return None
+    now = now or datetime.now(timezone.utc)
+    recent = [
+        (ts, pct) for ts, pct in samples
+        if (now - ts).total_seconds() <= BURN_RATE_LOOKBACK_SECONDS
+    ]
+    if len(recent) < 2:
+        return None
+    first_ts, first_pct = recent[0]
+    last_ts, last_pct = recent[-1]
+    span = (last_ts - first_ts).total_seconds()
+    if span < BURN_RATE_MIN_SPAN_SECONDS:
+        return None
+    rate = (last_pct - first_pct) / (span / 3600.0)
+    if rate < 0:
+        return None
+    return round(rate, 2)
 
 
 class OpenCodeGoApiClient:
@@ -263,6 +335,9 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Zeitstempel der letzten echten Abrufe je Zyklus
         self.last_models_fetch: datetime | None = None
         self.last_usage_fetch: datetime | None = None
+        # Usage-Verlauf je Workspace-Fenster ("ws1:5h") -> [(ts, percent)],
+        # Basis der Burn-Rate-Berechnung (on-read, kein Reset-Job).
+        self._usage_samples: dict[str, list[tuple[datetime, float]]] = {}
 
     def recalculate_interval(self) -> None:
         """Intervall nach Auto-Update-Schaltern/Minuten NEU setzen (live)."""
@@ -276,6 +351,32 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.info("Go Gauge: Update-Intervall -> %s s (usage=%s/%smin, models=%s/%smin)",
                      effective, self.auto_usage, self.usage_minutes,
                      self.auto_models, self.models_minutes)
+
+    def _record_usage_sample(self, key: str, win: str, percent: float,
+                             now: datetime) -> None:
+        """Append a (timestamp, percent) sample for the burn-rate sensor.
+
+        Window-reset detection: a percent DROP for the same window means the
+        window rolled over, so the pre-reset history is cleared first instead
+        of leaving a bogus negative slope behind. The history is pruned to
+        BURN_RATE_LOOKBACK_SECONDS and capped at 64 entries (newest kept) to
+        bound memory over long uptimes.
+
+        Defensive `getattr`: lightweight test doubles bind `_async_update_data`
+        without running GoGaugeCoordinator.__init__, so `_usage_samples` may
+        not exist yet.
+        """
+        store = getattr(self, "_usage_samples", None)
+        if store is None:
+            store = {}
+            self._usage_samples = store
+        samples = store.setdefault(f"{key}:{win}", [])
+        if samples and percent < samples[-1][1]:
+            samples.clear()
+        samples.append((now, percent))
+        cutoff = now - timedelta(seconds=BURN_RATE_LOOKBACK_SECONDS)
+        samples[:] = [s for s in samples if s[0] >= cutoff]
+        del samples[:-64]
 
     async def _async_update_data(self) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
@@ -342,6 +443,12 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         entry["note"] = res["note"]
                     if entry["status"] == "ok":
                         ok_any = True
+                        # Nur ein ERFOLGREICHER Abruf erzeugt einen Sample -
+                        # im Except-Pfad (alter Stand beibehalten) NICHT.
+                        for win, blk in entry["windows"].items():
+                            pct = blk.get("percent")
+                            if isinstance(pct, (int, float)):
+                                self._record_usage_sample(key, win, float(pct), now)
                 except Exception as err:  # noqa: BLE001
                     # TRANSIENTER Fehler (Netz/Cloudflare): LETZTEN STAND BEHALTEN
                     entry = dict(old) if old else entry

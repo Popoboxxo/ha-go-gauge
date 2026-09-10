@@ -92,6 +92,9 @@ Namen automatisch, z. B. Umlaute → Basisvokal).
 | `sensor.go_gauge_team_monthly_reset` | `2026-09-17T08:38:28+00:00` (Timestamp) |
 | `sensor.go_gauge_team_weekly_prognose` | z. B. 92.4 (%) — Hochrechnung aufs Fensterende, kann >100 sein |
 | `sensor.go_gauge_team_weekly_pace` | `green` / `yellow` / `red` — Attribute: forecast_percent, green_below, red_above |
+| `sensor.go_gauge_team_weekly_restbudget` | 27 (%) — Restbudget = 100 − Nutzung |
+| `sensor.go_gauge_team_weekly_restzeit` | z. B. `62.5` (h) — Restzeit bis zum Fenster-Reset |
+| `sensor.go_gauge_team_weekly_burn_rate` | z. B. `4.2` (%/h) — Verbrauchstempo der letzten 2 h |
 | `binary_sensor.go_gauge_team_weekly_rate_limited` | ON = für dieses Fenster rate-limited |
 | `binary_sensor.go_gauge_team_abo_aktiv` | ON = aktives Abo, OFF + `note` = kein Abo |
 | `binary_sensor.go_gauge_api_erreichbar` | API-Status (Gerät „Go Gauge Konto") |
