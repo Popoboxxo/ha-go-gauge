@@ -78,6 +78,14 @@ Reset-Zeiten, Refresh-/Warnschwellen-Settings). Die workspace-unabhängigen Enti
 (Modell-Katalog, Live-Modelle, Günstigstes Modell, Free-Modelle, API erreichbar) liegen
 auf einem eigenen, gemeinsamen Gerät „Go Gauge Konto".
 
+## Dashboards
+
+Fertige Dashboard-Vorlagen für deinen Workspace liegen in
+[docs/dashboards/README.md](docs/dashboards/README.md): eine **Standard**-Variante
+nur mit Home-Assistant-Bordmitteln (keine Zusatzintegration nötig) und eine
+kompakte **Mushroom**-Variante (Frontend-Ressource via HACS). Beide zeigen
+Nutzung, Pace, Prognose, Restbudget/-zeit, Steuerung und Modell-Katalog.
+
 ## Entitäten (Beispiel: Workspace „Team")
 
 Die Entity-Namen enthalten den beim Einrichten vergebenen Workspace-Namen — die

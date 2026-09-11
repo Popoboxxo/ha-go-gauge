@@ -1,0 +1,186 @@
+# =============================================================================
+# Go Gauge - Standard-Dashboard (nur eingebaute Home-Assistant-Karten)
+# -----------------------------------------------------------------------------
+# Zweck   : Nutzung, Prognose, Pace, Restzeit, Steuerung und Modell-Katalog
+#           eines Go-Gauge-Workspaces auf einem kompakten Dashboard.
+# Custom  : benoetigte Custom-Ressourcen: keine (alle Karten sind HA-Bordmittel).
+# Bindung : `WS` ist ein Platzhalter fuer den Workspace-Slug in der entity_id.
+#           Vor der Verwendung durch den echten Slug ersetzen. entity_ids NIE
+#           aus dem Friendly Name raten, sondern ueber die unique_id-Suffixe
+#           der Entity-Registry ermitteln (siehe entity-map.yaml und
+#           docs/dashboards/README.md).
+# Hinweis : `statistics-graph`/`history-graph`/`gauge`/`grid` sind ab HA 2024.6
+#           verfuegbar (hacs.json-Mindestversion).
+# =============================================================================
+title: Go Gauge
+views:
+  - title: "Go Gauge — WS"
+    path: go-gauge
+    icon: mdi:gauge
+    cards:
+      # --- Kopfzeile: Abo-, API-Status und Status/Note je Fenster ------------
+      - type: markdown
+        content: |
+          ## Go Gauge — WS
+
+          **Abo:** {{ 'aktiv' if is_state('binary_sensor.go_gauge_WS_abo_aktiv', 'on') else 'kein Abo / unbekannt' }} · **API:** {{ 'erreichbar' if is_state('binary_sensor.go_gauge_api_erreichbar', 'on') else 'nicht erreichbar' }}
+
+          {% for win, label in [('5h_rolling', '5h rolling'), ('weekly', 'Weekly'), ('monthly', 'Monthly')] %}
+          - **{{ label }}:** {{ state_attr('sensor.go_gauge_WS_' ~ win ~ '_nutzung', 'status') or 'unbekannt' }}{% set note = state_attr('sensor.go_gauge_WS_' ~ win ~ '_nutzung', 'note') %}{% if note %} — {{ note }}{% endif %}
+          {% endfor %}
+
+      # --- Fenster: 5h rolling ----------------------------------------------
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          # Die severity-Schwellen MUESSEN zu den Number-Entities passen:
+          # number.go_gauge_warnschwelle_WS (Gruen/Gelb, Default 80)
+          # number.go_gauge_ampel_rot_grenze_WS (Gelb/Rot, Default 100).
+          - type: gauge
+            entity: sensor.go_gauge_WS_5h_rolling_nutzung
+            name: 5h rolling
+            min: 0
+            max: 100
+            needle: true
+            severity:
+              green: 0
+              yellow: 80
+              red: 100
+          - type: entities
+            entities:
+              - entity: sensor.go_gauge_WS_5h_rolling_pace
+                name: Pace
+              - entity: sensor.go_gauge_WS_5h_rolling_prognose
+                name: Prognose
+              - entity: sensor.go_gauge_WS_5h_rolling_restbudget
+                name: Restbudget
+              - entity: sensor.go_gauge_WS_5h_rolling_restzeit
+                name: Restzeit
+              - entity: sensor.go_gauge_WS_5h_rolling_burn_rate
+                name: Burn-Rate
+              - entity: sensor.go_gauge_WS_5h_rolling_reset
+                name: Reset
+              - entity: binary_sensor.go_gauge_WS_5h_rolling_rate_limited
+                name: Rate-limited
+
+      # --- Fenster: Weekly ---------------------------------------------------
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          - type: gauge
+            entity: sensor.go_gauge_WS_weekly_nutzung
+            name: Weekly
+            min: 0
+            max: 100
+            needle: true
+            severity:
+              green: 0
+              yellow: 80
+              red: 100
+          - type: entities
+            entities:
+              - entity: sensor.go_gauge_WS_weekly_pace
+                name: Pace
+              - entity: sensor.go_gauge_WS_weekly_prognose
+                name: Prognose
+              - entity: sensor.go_gauge_WS_weekly_restbudget
+                name: Restbudget
+              - entity: sensor.go_gauge_WS_weekly_restzeit
+                name: Restzeit
+              - entity: sensor.go_gauge_WS_weekly_burn_rate
+                name: Burn-Rate
+              - entity: sensor.go_gauge_WS_weekly_reset
+                name: Reset
+              - entity: binary_sensor.go_gauge_WS_weekly_rate_limited
+                name: Rate-limited
+
+      # --- Fenster: Monthly --------------------------------------------------
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          - type: gauge
+            entity: sensor.go_gauge_WS_monthly_nutzung
+            name: Monthly
+            min: 0
+            max: 100
+            needle: true
+            severity:
+              green: 0
+              yellow: 80
+              red: 100
+          - type: entities
+            entities:
+              - entity: sensor.go_gauge_WS_monthly_pace
+                name: Pace
+              - entity: sensor.go_gauge_WS_monthly_prognose
+                name: Prognose
+              - entity: sensor.go_gauge_WS_monthly_restbudget
+                name: Restbudget
+              - entity: sensor.go_gauge_WS_monthly_restzeit
+                name: Restzeit
+              - entity: sensor.go_gauge_WS_monthly_burn_rate
+                name: Burn-Rate
+              - entity: sensor.go_gauge_WS_monthly_reset
+                name: Reset
+              - entity: binary_sensor.go_gauge_WS_monthly_rate_limited
+                name: Rate-limited
+
+      # --- Nutzungsverlauf ---------------------------------------------------
+      - type: history-graph
+        title: Nutzungsverlauf
+        hours_to_show: 48
+        refresh_interval: 60
+        entities:
+          - entity: sensor.go_gauge_WS_5h_rolling_nutzung
+            name: 5h rolling
+          - entity: sensor.go_gauge_WS_weekly_nutzung
+            name: Weekly
+          - entity: sensor.go_gauge_WS_monthly_nutzung
+            name: Monthly
+
+      # --- Steuerung ---------------------------------------------------------
+      - type: entities
+        title: Steuerung
+        entities:
+          - entity: number.go_gauge_warnschwelle_WS
+            name: Warnschwelle
+          - entity: number.go_gauge_ampel_rot_grenze_WS
+            name: Ampel Rot-Grenze
+          - entity: number.go_gauge_nutzung_refresh_minuten_WS
+            name: Nutzung Refresh (Minuten)
+          - entity: number.go_gauge_modelle_refresh_minuten_WS
+            name: Modelle Refresh (Minuten)
+          - entity: switch.go_gauge_WS_nutzung_auto_update
+            name: Nutzung Auto-Update
+          - entity: switch.go_gauge_WS_modelle_auto_update
+            name: Modelle Auto-Update
+          # Friendly Name ohne Workspace-Name: bei mehreren Workspaces wird die
+          # entity_id zu button.go_gauge_aktualisieren_2 (siehe README, Gotcha).
+          - entity: button.go_gauge_aktualisieren
+            name: Aktualisieren
+
+      # --- Modell-Katalog / Konto -------------------------------------------
+      - type: entities
+        title: Modell-Katalog / Konto
+        entities:
+          - entity: sensor.go_gauge_modelle
+            name: Modelle (Anzahl)
+          - entity: sensor.go_gauge_live_modelle
+            name: Live-Modelle
+          - entity: sensor.go_gauge_gunstigstes_modell
+            name: Günstigstes Modell
+          - entity: sensor.go_gauge_free_modelle
+            name: Free-Modelle
+          - entity: binary_sensor.go_gauge_api_erreichbar
+            name: API erreichbar
+      - type: markdown
+        content: |
+          **Live:** {{ states('sensor.go_gauge_live_modelle') }} von {{ states('sensor.go_gauge_modelle') }} Modellen · **Günstigstes:** {{ states('sensor.go_gauge_gunstigstes_modell') }} · **Free:** {{ states('sensor.go_gauge_free_modelle') }}
+
+          Modell-Details (Ranking nach Kosten, vollstaendiger Katalog) stehen
+          ausschliesslich in den Attributen `ranking_by_cost` und `catalog_json`
+          des Sensors `sensor.go_gauge_modelle` - es gibt keine Einzel-Entities
+          pro Modell.
