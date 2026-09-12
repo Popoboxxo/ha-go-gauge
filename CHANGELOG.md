@@ -1,11 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [1.5.0] - 2026-09-12
 
-> **SemVer note:** the next release is a **MAJOR** release. Renaming
-> entity IDs is a user-visible breaking change (per this project's rule that
-> entity/naming changes are always MAJOR). The version number itself is set by
-> the release process and is intentionally not assigned here.
+> **SemVer note:** this is released as **1.5.0 (MINOR)** by explicit maintainer
+> decision. Strictly, renaming entity IDs is a user-visible breaking change (per
+> this project's rule that entity/naming changes are always MAJOR); the breaking
+> change is therefore called out explicitly below, including the required user
+> action. `v1.5.0` ↔ `manifest.json` `"version": "1.5.0"`.
 
 ### Summary
 
@@ -140,7 +141,7 @@ slug. Check the HA log for
 
 ### Full Changelog
 
-https://github.com/Popoboxxo/ha-go-gauge/compare/v1.4.0...HEAD
+https://github.com/Popoboxxo/ha-go-gauge/compare/v1.4.0...v1.5.0
 
 ## [1.4.0] — 2026-09-10
 
