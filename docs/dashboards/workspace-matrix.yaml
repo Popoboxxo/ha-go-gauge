@@ -4,19 +4,30 @@
 # Zweck   : Mehrere Go-Gauge-Workspaces nebeneinander auf einem Dashboard.
 #           Pro Workspace wird das decluttering-Template `go_gauge_workspace`
 #           einmal instanziiert; das responsive Grid kommt von `layout-card`.
-#           Je Kachel: Abo-/API-Status, Refresh-Button, drei vollstaendige
-#           Fenster-Bloecke (5h rolling / Weekly / Monthly) mit
-#           Reset/Remaining/Time-to-Reset/Burn-Rate und der Rate-Limit-Chip,
-#           dazu die Steuerungs-Sektion (Warning Threshold, Pace Red Limit,
-#           Auto-Update-Schalter).
+#           Je Kachel: Abo-Status, Refresh-Button, drei KOMPAKTE Fenster-Karten
+#           (5h rolling / Weekly / Monthly) mit Nutzung, Prognose, Pace,
+#           Restbudget, Reset, Restzeit und Burn-Rate. Das Rate-Limit wird
+#           ueber Icon/Farbe plus Text-Hinweis signalisiert (keine separate
+#           Rate-Limit-Chip mehr), dazu die Steuerungs-Sektion (Warning
+#           Threshold, Pace Red Limit, Auto-Update-Schalter).
+#           Oberhalb des Grids: die konto-weite API-Reachability genau einmal.
+#           Unterhalb des Grids: das Konto-/Katalog-Panel (Catalog Owner only).
 #
-# Custom  : benoetigte Frontend-Ressourcen (alle via HACS -> Frontend
-#           installieren, danach Home Assistant neu laden):
-#           - decluttering-card       -> custom:decluttering-card (Template)
+# Custom  : benoetigte Frontend-Ressourcen (via HACS installieren, danach Home
+#           Assistant neu laden):
+#           - decluttering-card-plus  -> custom:decluttering-card-plus (Template)
+#                                        Installation als HACS Custom Repository,
+#                                        Typ "Dashboard"
+#                                        (URL: https://github.com/tempus2016/decluttering-card-plus)
+#                                        oder manuell `decluttering-card-plus.js`.
 #           - layout-card             -> custom:layout-card (Grid-Layout)
 #           - Mushroom                -> custom:mushroom-* (Karten der Kachel)
 #           - vertical-stack-in-card  -> custom:vertical-stack-in-card
 #                                        (Kachel-Container)
+#
+#           HA-Mindestversion: 2024.7 (Badges ab 2024.8). decluttering-card-plus
+#           registriert optional auch den Alt-Typ `custom:decluttering-card`;
+#           neue Dashboards nutzen aber immer `custom:decluttering-card-plus`.
 #
 # Bindung : entity_ids NIEMALS aus dem Friendly Name raten! Der Friendly Name
 #           haengt vom Workspace-Namen und der Systemsprache ab und ist damit
@@ -34,7 +45,7 @@
 
 decluttering_templates:
   # ---------------------------------------------------------------------------
-  # Template-Variablen (pro custom:decluttering-card -> `variables:` gebunden)
+  # Template-Variablen (pro custom:decluttering-card-plus -> `variables:` gebunden)
   # ---------------------------------------------------------------------------
   # [[ws_name]]     Anzeigename der Kachel (frei waehlbar, z.B. "App").
   #
@@ -72,17 +83,18 @@ decluttering_templates:
     card:
       type: custom:vertical-stack-in-card
       cards:
-        # --- Header: Abo, API, Refresh ---
+        # --- Header: Abo + Refresh -------------------------------------------
+        # API-Reachability ist NICHT Teil der Kachel: binary_sensor.
+        # go_gauge_api_reachable ist konto-weit und existiert genau einmal
+        # (Catalog Owner) -> globale Kopfzeile ueber dem Grid.
         - type: custom:mushroom-chips-card
           alignment: center
           chips:
+            # Abo-Status icon-only (content_info: none); der State ergibt sich
+            # aus der Icon-Farbe (an/aus).
             - type: entity
               entity: binary_sensor.[[slug_a]]_subscription_active
               icon: mdi:shield-check-outline
-              content_info: state
-            - type: entity
-              entity: binary_sensor.go_gauge_api_reachable
-              icon: mdi:cloud-check-outline
               content_info: none
             - type: action
               icon: mdi:refresh
@@ -96,110 +108,130 @@ decluttering_templates:
           title: "[[ws_name]]"
           subtitle: Nutzung & Steuerung
 
-        # --- Window: 5h rolling ---
+        # --- Window: 5h rolling (eine kompakte Karte) -------------------------
         - type: custom:mushroom-template-card
           entity: sensor.[[slug_a]]_5h_rolling_usage
-          primary: "5h Rolling: {{ states('sensor.[[slug_a]]_5h_rolling_usage') }}%"
-          secondary: "Prog: {{ states('sensor.[[slug_b]]_5h_rolling_forecast') }}% | Pace: {{ states('sensor.[[slug_b]]_5h_rolling_pace') }}"
-          icon: mdi:speedometer
+          primary: >-
+            {%- set v = states('sensor.[[slug_a]]_5h_rolling_usage') -%}
+            5h Rolling: {{ '–' if v in ['unknown', 'unavailable', 'none', ''] else v }}%
+          # secondary: mehrzeilig via Jinja-Whitespace-Control + '\n'
+          # (der YAML-Block-Skalar selbst foldet nur zu einer Quellzeile).
+          secondary: >-
+            {%- set dash = '–' -%}
+            {%- macro v(e) -%}
+            {%- set s = states(e) -%}
+            {{- dash if s in ['unknown', 'unavailable', 'none', ''] else s -}}
+            {%- endmacro -%}
+            {%- macro ts(e) -%}
+            {%- set s = states(e) -%}
+            {{- dash if s in ['unknown', 'unavailable', 'none', ''] else as_timestamp(s) | timestamp_custom('%d.%m. %H:%M', true) -}}
+            {%- endmacro -%}
+            Prog: {{ v('sensor.[[slug_b]]_5h_rolling_forecast') }}%{{- '\n' -}}
+            Pace: {{ v('sensor.[[slug_b]]_5h_rolling_pace') }}{{- '\n' -}}
+            Rem: {{ v('sensor.[[slug_b]]_5h_rolling_remaining') }}%{{- '\n' -}}
+            Reset: {{ ts('sensor.[[slug_a]]_5h_rolling_reset') }}{{- '\n' -}}
+            Restzeit: {{ v('sensor.[[slug_b]]_5h_rolling_time_to_reset') }} h{{- '\n' -}}
+            Burn: {{ v('sensor.[[slug_b]]_5h_rolling_burn_rate') }} %/h
+            {%- if is_state('binary_sensor.[[slug_a]]_5h_rolling_rate_limited', 'on') -%}
+            {{- '\n' -}}⚠ RATE-LIMITED
+            {%- endif -%}
+          icon: >-
+            {%- if is_state('binary_sensor.[[slug_a]]_5h_rolling_rate_limited', 'on') -%}
+            mdi:alert-octagon
+            {%- else -%}
+            mdi:speedometer
+            {%- endif -%}
           icon_color: >-
-            {% set p = states('sensor.[[slug_b]]_5h_rolling_pace') %}
-            {% if p == 'red' %}red{% elif p == 'yellow' %}orange{% else %}green{% endif %}
+            {%- if is_state('binary_sensor.[[slug_a]]_5h_rolling_rate_limited', 'on') -%}
+            red
+            {%- else -%}
+            {%- set p = states('sensor.[[slug_b]]_5h_rolling_pace') -%}
+            {%- if p == 'red' -%}red{%- elif p == 'yellow' -%}orange{%- else -%}green{%- endif -%}
+            {%- endif -%}
           tap_action:
             action: more-info
-        - type: custom:mushroom-chips-card
-          alignment: left
-          chips:
-            - type: entity
-              entity: sensor.[[slug_a]]_5h_rolling_reset
-              content_info: state
-            - type: entity
-              entity: sensor.[[slug_b]]_5h_rolling_remaining
-              content_info: state
-            - type: entity
-              entity: sensor.[[slug_b]]_5h_rolling_time_to_reset
-              content_info: state
-            - type: entity
-              entity: sensor.[[slug_b]]_5h_rolling_burn_rate
-              content_info: state
-            - type: conditional
-              conditions:
-                - entity: binary_sensor.[[slug_a]]_5h_rolling_rate_limited
-                  state: "on"
-              chip:
-                type: entity
-                entity: binary_sensor.[[slug_a]]_5h_rolling_rate_limited
-                icon_color: red
 
-        # --- Window: Weekly ---
+        # --- Window: Weekly (eine kompakte Karte) -----------------------------
         - type: custom:mushroom-template-card
           entity: sensor.[[slug_a]]_weekly_usage
-          primary: "Weekly: {{ states('sensor.[[slug_a]]_weekly_usage') }}%"
-          secondary: "Prog: {{ states('sensor.[[slug_b]]_weekly_forecast') }}% | Pace: {{ states('sensor.[[slug_b]]_weekly_pace') }}"
-          icon: mdi:speedometer
+          primary: >-
+            {%- set v = states('sensor.[[slug_a]]_weekly_usage') -%}
+            Weekly: {{ '–' if v in ['unknown', 'unavailable', 'none', ''] else v }}%
+          secondary: >-
+            {%- set dash = '–' -%}
+            {%- macro v(e) -%}
+            {%- set s = states(e) -%}
+            {{- dash if s in ['unknown', 'unavailable', 'none', ''] else s -}}
+            {%- endmacro -%}
+            {%- macro ts(e) -%}
+            {%- set s = states(e) -%}
+            {{- dash if s in ['unknown', 'unavailable', 'none', ''] else as_timestamp(s) | timestamp_custom('%d.%m. %H:%M', true) -}}
+            {%- endmacro -%}
+            Prog: {{ v('sensor.[[slug_b]]_weekly_forecast') }}%{{- '\n' -}}
+            Pace: {{ v('sensor.[[slug_b]]_weekly_pace') }}{{- '\n' -}}
+            Rem: {{ v('sensor.[[slug_b]]_weekly_remaining') }}%{{- '\n' -}}
+            Reset: {{ ts('sensor.[[slug_a]]_weekly_reset') }}{{- '\n' -}}
+            Restzeit: {{ v('sensor.[[slug_b]]_weekly_time_to_reset') }} h{{- '\n' -}}
+            Burn: {{ v('sensor.[[slug_b]]_weekly_burn_rate') }} %/h
+            {%- if is_state('binary_sensor.[[slug_a]]_weekly_rate_limited', 'on') -%}
+            {{- '\n' -}}⚠ RATE-LIMITED
+            {%- endif -%}
+          icon: >-
+            {%- if is_state('binary_sensor.[[slug_a]]_weekly_rate_limited', 'on') -%}
+            mdi:alert-octagon
+            {%- else -%}
+            mdi:speedometer
+            {%- endif -%}
           icon_color: >-
-            {% set p = states('sensor.[[slug_b]]_weekly_pace') %}
-            {% if p == 'red' %}red{% elif p == 'yellow' %}orange{% else %}green{% endif %}
+            {%- if is_state('binary_sensor.[[slug_a]]_weekly_rate_limited', 'on') -%}
+            red
+            {%- else -%}
+            {%- set p = states('sensor.[[slug_b]]_weekly_pace') -%}
+            {%- if p == 'red' -%}red{%- elif p == 'yellow' -%}orange{%- else -%}green{%- endif -%}
+            {%- endif -%}
           tap_action:
             action: more-info
-        - type: custom:mushroom-chips-card
-          alignment: left
-          chips:
-            - type: entity
-              entity: sensor.[[slug_a]]_weekly_reset
-              content_info: state
-            - type: entity
-              entity: sensor.[[slug_b]]_weekly_remaining
-              content_info: state
-            - type: entity
-              entity: sensor.[[slug_b]]_weekly_time_to_reset
-              content_info: state
-            - type: entity
-              entity: sensor.[[slug_b]]_weekly_burn_rate
-              content_info: state
-            - type: conditional
-              conditions:
-                - entity: binary_sensor.[[slug_a]]_weekly_rate_limited
-                  state: "on"
-              chip:
-                type: entity
-                entity: binary_sensor.[[slug_a]]_weekly_rate_limited
-                icon_color: red
 
-        # --- Window: Monthly ---
+        # --- Window: Monthly (eine kompakte Karte) ----------------------------
         - type: custom:mushroom-template-card
           entity: sensor.[[slug_a]]_monthly_usage
-          primary: "Monthly: {{ states('sensor.[[slug_a]]_monthly_usage') }}%"
-          secondary: "Prog: {{ states('sensor.[[slug_b]]_monthly_forecast') }}% | Pace: {{ states('sensor.[[slug_b]]_monthly_pace') }}"
-          icon: mdi:speedometer
+          primary: >-
+            {%- set v = states('sensor.[[slug_a]]_monthly_usage') -%}
+            Monthly: {{ '–' if v in ['unknown', 'unavailable', 'none', ''] else v }}%
+          secondary: >-
+            {%- set dash = '–' -%}
+            {%- macro v(e) -%}
+            {%- set s = states(e) -%}
+            {{- dash if s in ['unknown', 'unavailable', 'none', ''] else s -}}
+            {%- endmacro -%}
+            {%- macro ts(e) -%}
+            {%- set s = states(e) -%}
+            {{- dash if s in ['unknown', 'unavailable', 'none', ''] else as_timestamp(s) | timestamp_custom('%d.%m. %H:%M', true) -}}
+            {%- endmacro -%}
+            Prog: {{ v('sensor.[[slug_b]]_monthly_forecast') }}%{{- '\n' -}}
+            Pace: {{ v('sensor.[[slug_b]]_monthly_pace') }}{{- '\n' -}}
+            Rem: {{ v('sensor.[[slug_b]]_monthly_remaining') }}%{{- '\n' -}}
+            Reset: {{ ts('sensor.[[slug_a]]_monthly_reset') }}{{- '\n' -}}
+            Restzeit: {{ v('sensor.[[slug_b]]_monthly_time_to_reset') }} h{{- '\n' -}}
+            Burn: {{ v('sensor.[[slug_b]]_monthly_burn_rate') }} %/h
+            {%- if is_state('binary_sensor.[[slug_a]]_monthly_rate_limited', 'on') -%}
+            {{- '\n' -}}⚠ RATE-LIMITED
+            {%- endif -%}
+          icon: >-
+            {%- if is_state('binary_sensor.[[slug_a]]_monthly_rate_limited', 'on') -%}
+            mdi:alert-octagon
+            {%- else -%}
+            mdi:speedometer
+            {%- endif -%}
           icon_color: >-
-            {% set p = states('sensor.[[slug_b]]_monthly_pace') %}
-            {% if p == 'red' %}red{% elif p == 'yellow' %}orange{% else %}green{% endif %}
+            {%- if is_state('binary_sensor.[[slug_a]]_monthly_rate_limited', 'on') -%}
+            red
+            {%- else -%}
+            {%- set p = states('sensor.[[slug_b]]_monthly_pace') -%}
+            {%- if p == 'red' -%}red{%- elif p == 'yellow' -%}orange{%- else -%}green{%- endif -%}
+            {%- endif -%}
           tap_action:
             action: more-info
-        - type: custom:mushroom-chips-card
-          alignment: left
-          chips:
-            - type: entity
-              entity: sensor.[[slug_a]]_monthly_reset
-              content_info: state
-            - type: entity
-              entity: sensor.[[slug_b]]_monthly_remaining
-              content_info: state
-            - type: entity
-              entity: sensor.[[slug_b]]_monthly_time_to_reset
-              content_info: state
-            - type: entity
-              entity: sensor.[[slug_b]]_monthly_burn_rate
-              content_info: state
-            - type: conditional
-              conditions:
-                - entity: binary_sensor.[[slug_a]]_monthly_rate_limited
-                  state: "on"
-              chip:
-                type: entity
-                entity: binary_sensor.[[slug_a]]_monthly_rate_limited
-                icon_color: red
 
         # --- Control ---
         - type: custom:mushroom-title-card
@@ -242,6 +274,17 @@ views:
     icon: mdi:view-dashboard
     panel: true
     cards:
+      # --- Globale Kopfzeile: API-Reachability (Konto-Ebene) ------------------
+      # binary_sensor.go_gauge_api_reachable ist KONTO-WEIT und existiert genau
+      # einmal (Catalog Owner) - deshalb global ueber dem Grid statt pro Kachel.
+      - type: custom:mushroom-chips-card
+        alignment: center
+        chips:
+          - type: entity
+            entity: binary_sensor.go_gauge_api_reachable
+            icon: mdi:cloud-check-outline
+            content_info: state
+
       - type: custom:layout-card
         layout_type: custom:grid-layout
         layout:
@@ -255,7 +298,7 @@ views:
         cards:
           # Beispiel-Workspace "App": die Slugs werden ueber den
           # unique_id-Suffix aus der Entity-Registry ermittelt (NIE raten).
-          - type: custom:decluttering-card
+          - type: custom:decluttering-card-plus
             template: go_gauge_workspace
             variables:
               - ws_name: "App"
@@ -265,3 +308,18 @@ views:
               - num_suffix: "_app"
               - ampel_id: "number.software_go_gauge_app_go_gauge_pace_red_limit_app"
               - refresh_btn: "button.go_gauge_ha_go_gauge_refresh_3"
+
+      # --- Modell-Katalog / Konto (Catalog Owner only / genau einmal) ---------
+      # Konto-weites Panel unterhalb des Grids; die Account-Entities existieren
+      # genau einmal (Catalog Owner), nicht pro Workspace.
+      - type: entities
+        title: Modell-Katalog / Konto
+        entities:
+          - entity: sensor.go_gauge_models
+            name: Model-Catalog
+          - entity: sensor.go_gauge_live_models
+            name: Live-Models-Count
+          - entity: sensor.go_gauge_cheapest_model
+            name: Cheapest Model
+          - entity: sensor.go_gauge_free_models
+            name: Free Models

@@ -11,12 +11,13 @@ Integration selbst wird dadurch nicht verändert.
 |---|---|---|
 | [`workspace-standard.yaml`](workspace-standard.yaml) | Nur Home-Assistant-Bordmittel (markdown, grid, gauge, entities, history-graph) | keine |
 | [`workspace-mushroom.yaml`](workspace-mushroom.yaml) | Mushroom-Karten (`custom:mushroom-*`) | Mushroom (via HACS) |
-| [`workspace-matrix.yaml`](workspace-matrix.yaml) | Multi-Workspace-Matrix: `decluttering-card`-Kachel je Workspace im `layout-card`-Grid, Kacheln im Mushroom-Look | decluttering-card, layout-card, Mushroom, vertical-stack-in-card |
+| [`workspace-matrix.yaml`](workspace-matrix.yaml) | Multi-Workspace-Matrix: `decluttering-card-plus`-Kachel je Workspace im `layout-card`-Grid, Kacheln im Mushroom-Look | decluttering-card-plus, layout-card, Mushroom, vertical-stack-in-card |
 | [`entity-map.yaml`](entity-map.yaml) | maschinenlesbare Entity-/Bindungs-Map | keine |
 
 Die Standard- und die Mushroom-Vorlage liefern denselben Informationsumfang
 (die Matrix-Vorlage zeigt dieselben Fenster- und Steuerungswerte je Workspace
-als Kachel; Nutzungsverlauf und Modell-Katalog fehlen dort bewusst):
+als Kachel; der **Nutzungsverlauf** fehlt dort bewusst, der **Modell-Katalog**
+ist als Konto-Panel vorhanden):
 
 - Kopfzeile mit Abo-Status, API-Status und Status/Note je Fenster,
 - pro Fenster (5h rolling / Weekly / Monthly) Nutzung, Pace, Prognose,
@@ -56,11 +57,17 @@ Mushroom-Dashboard — Screenshot folgt (Platzhalter).
 
 - HACS installieren (falls nicht vorhanden) und im HACS-Frontend **alle vier**
   Ressourcen installieren, danach Home Assistant neu laden:
-  - **decluttering-card** (`custom:decluttering-card`) — Kachel-Template
-    `go_gauge_workspace`,
+  - **decluttering-card-plus** (`custom:decluttering-card-plus`) — Kachel-Template
+    `go_gauge_workspace`. Nicht im HACS-Default-Katalog, daher als HACS
+    **Custom Repository** (Typ „Dashboard", URL
+    `https://github.com/tempus2016/decluttering-card-plus`) hinzufügen —
+    alternativ die Ressource `decluttering-card-plus.js` manuell einbinden,
   - **layout-card** (`custom:layout-card`) — responsives Grid-Layout,
   - **Mushroom** (`custom:mushroom-*`) — Karten der Kachel,
   - **vertical-stack-in-card** (`custom:vertical-stack-in-card`) — Kachel-Container.
+- Home Assistant **>= 2024.7** (Badges ab 2024.8). Die Karte registriert optional
+  auch den Alt-Typ `custom:decluttering-card`; die Vorlage nutzt ausschließlich
+  `custom:decluttering-card-plus`.
 - `card-mod` ist ausdrücklich **nicht** erforderlich.
 
 ### Optional / weiterführend (NICHT Pflicht)
@@ -164,16 +171,18 @@ des `_model_catalog`-Sensors (`catalog_json`, `ranking_by_cost`,
 ## 6. `workspace-matrix.yaml` — Variablen & Bindung
 
 `workspace-matrix.yaml` zeigt **mehrere Workspaces nebeneinander**: ein
-`custom:decluttering-card`-Template (`go_gauge_workspace`) wird pro Workspace
-einmal instanziiert, das Grid kommt von `custom:layout-card`.
+`custom:decluttering-card-plus`-Template (`go_gauge_workspace`) wird pro
+Workspace einmal instanziiert, das Grid kommt von `custom:layout-card`.
 
 ### Benötigte Custom-Ressourcen
 
-Alle vier via HACS → Frontend installieren, danach Home Assistant neu laden:
+Alle vier via HACS installieren (decluttering-card-plus als **Custom
+Repository**, Typ „Dashboard", siehe Abschnitt 2), danach Home Assistant neu
+laden:
 
 | Ressource | Aufgabe |
 |---|---|
-| `decluttering-card` | Kachel-Template `go_gauge_workspace` inkl. `[[variablen]]` |
+| `decluttering-card-plus` (`custom:decluttering-card-plus`) | Kachel-Template `go_gauge_workspace` inkl. `[[variablen]]` |
 | `layout-card` | responsives Grid (`grid-template-columns`) |
 | Mushroom | Karten der Kachel (`custom:mushroom-*`) |
 | `vertical-stack-in-card` | Container, der die Karten einer Kachel zusammenfasst |
@@ -181,7 +190,7 @@ Alle vier via HACS → Frontend installieren, danach Home Assistant neu laden:
 ### `[[...]]`-Variablen
 
 Die Kachel ist über sieben Variablen parametrisiert. Sie werden pro
-`custom:decluttering-card` im `variables:`-Block gebunden:
+`custom:decluttering-card-plus` im `variables:`-Block gebunden:
 
 | Variable | Bedeutung | Beispiel |
 |---|---|---|
@@ -195,10 +204,25 @@ Die Kachel ist über sieben Variablen parametrisiert. Sie werden pro
 
 In der Kachel ergibt sich damit z. B. `sensor.[[slug_a]]_5h_rolling_usage`,
 `sensor.[[slug_b]]_weekly_forecast` oder
-`number.[[num_slug]]_warning_threshold[[num_suffix]]`. Die drei Fensterblöcke
-(5h rolling / Weekly / Monthly) sind vollständig ausgeschrieben; der
-Rate-Limit-Chip erscheint nur, wenn der jeweilige
-`binary_sensor.[[slug_a]]_<fenster>_rate_limited` den State `on` hat.
+`number.[[num_slug]]_warning_threshold[[num_suffix]]`. Pro Fenster
+(5h rolling / Weekly / Monthly) gibt es genau **eine** kompakte
+`custom:mushroom-template-card`: `primary` zeigt die Nutzung mit `%`,
+`secondary` die Werte mehrzeilig (`Prog`, `Pace`, `Rem`, `Reset`, `Restzeit`
+in `h`, `Burn` in `%/h`; unbekannte/`unavailable`-States werden als `–`
+gerendert). Das Rate-Limit wird **nicht** mehr über eine separate Chip,
+sondern über Icon (Warn-Icon), rote `icon_color` und den Hinweis
+„RATE-LIMITED" im `secondary` signalisiert, sobald
+`binary_sensor.[[slug_a]]_<fenster>_rate_limited` den State `on` hat. `tap_action`
+bleibt `more-info`.
+
+Der Abo-/API-Status ist aufgeteilt: Der Abo-Status (`subscription_active`)
+bleibt icon-only im Kachel-Header, die **API-Reachability**
+(`binary_sensor.go_gauge_api_reachable`) liegt als konto-weite Kopfzeile
+**über** dem Grid (siehe unten). Unterhalb des Grids steht das Konto-Panel
+„Modell-Katalog / Konto" mit `sensor.go_gauge_models`,
+`sensor.go_gauge_live_models`, `sensor.go_gauge_cheapest_model` und
+`sensor.go_gauge_free_models` — diese Entities existieren nur einmal
+(Catalog Owner).
 
 ### Bindungs-Caveat
 
