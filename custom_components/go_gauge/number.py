@@ -14,6 +14,10 @@ from .const import (
     DEFAULT_USAGE_REFRESH_MINUTES,
     DEFAULT_WARN_PERCENT,
     DOMAIN,
+    ENTITY_NAME_MODELS,
+    ENTITY_NAME_PACE_RED_LIMIT,
+    ENTITY_NAME_USAGE,
+    ENTITY_NAME_WARNING_THRESHOLD,
 )
 from .coordinator import GoGaugeCoordinator
 from .entity import GoGaugeEntityBase, persist_options
@@ -65,7 +69,7 @@ class WarnPercentNumber(_SettingNumber):
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="warn_percent",
-                         name=f"{_with_ws(coordinator, 'Go Gauge Warnschwelle')}",
+                         name=f"{_with_ws(coordinator, f'Go Gauge {ENTITY_NAME_WARNING_THRESHOLD}')}",
                          min_value=1, max_value=100)
 
     @property
@@ -87,7 +91,7 @@ class PaceRedPercentNumber(_SettingNumber):
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="pace_red_percent",
-                         name=f"{_with_ws(coordinator, 'Go Gauge Ampel Rot-Grenze')}",
+                         name=f"{_with_ws(coordinator, f'Go Gauge {ENTITY_NAME_PACE_RED_LIMIT}')}",
                          min_value=1, max_value=300)
 
     @property
@@ -109,7 +113,7 @@ class UsageRefreshMinutesNumber(_SettingNumber):
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="usage_refresh_minutes",
-                         name=f"{_with_ws(coordinator, 'Go Gauge Nutzung Refresh (Minuten)')}",
+                         name=f"{_with_ws(coordinator, f'Go Gauge {ENTITY_NAME_USAGE} Refresh (min)')}",
                          min_value=1, max_value=1440)
 
     @property
@@ -132,7 +136,7 @@ class ModelsRefreshMinutesNumber(_SettingNumber):
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="models_refresh_minutes",
-                         name=f"{_with_ws(coordinator, 'Go Gauge Modelle Refresh (Minuten)')}",
+                         name=f"{_with_ws(coordinator, f'Go Gauge {ENTITY_NAME_MODELS} Refresh (min)')}",
                          min_value=1, max_value=1440)
 
     @property

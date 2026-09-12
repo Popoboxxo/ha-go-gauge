@@ -12,7 +12,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, WINDOW_LABELS
+from .const import (
+    DOMAIN,
+    ENTITY_NAME_API_REACHABLE,
+    ENTITY_NAME_SUBSCRIPTION_ACTIVE,
+    WINDOW_LABELS,
+)
 from .coordinator import GoGaugeCoordinator
 from .entity import GoGaugeAccountEntityBase, GoGaugeEntityBase
 
@@ -88,7 +93,7 @@ class SubscriptionActiveBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
         super().__init__(coordinator, entry)
         self._key = key
         self._attr_unique_id = f"{entry.entry_id}_{key}_subscription_active"
-        self._attr_name = f"Go Gauge {ws_name or 'WS 1'} Abo aktiv"
+        self._attr_name = f"Go Gauge {ws_name or 'WS 1'} {ENTITY_NAME_SUBSCRIPTION_ACTIVE}"
 
     @property
     def is_on(self) -> bool | None:
@@ -115,7 +120,7 @@ class ApiReachableBinarySensor(GoGaugeAccountEntityBase, BinarySensorEntity):
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_api_reachable"
-        self._attr_name = "Go Gauge API erreichbar"
+        self._attr_name = f"Go Gauge {ENTITY_NAME_API_REACHABLE}"
 
     @property
     def is_on(self) -> bool | None:

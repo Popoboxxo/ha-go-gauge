@@ -8,6 +8,7 @@ weitere Instanzen teilen ihn (hass.data[DOMAIN]['_catalog_owner']).
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -15,6 +16,7 @@ from homeassistant.core import HomeAssistant
 from .const import (
     CONF_USAGE_REFRESH_MINUTES,
     DOMAIN,
+    migrate_entity_name,
     token_unique_id,
 )
 from .coordinator import GoGaugeCoordinator
@@ -24,8 +26,41 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "binary_sensor", "button", "switch", "number"]
 
 
+def _entity_name_migration_callback(registry_entry: Any) -> dict[str, str] | None:
+    """Registry-entry callback translating a legacy German ``original_name``.
+
+    Returns ``{"original_name": <english>}`` only when the name actually
+    changes, else ``None``. ``unique_id`` is never part of the returned dict -
+    the entity-name migration must not touch stable IDs.
+    """
+    original = getattr(registry_entry, "original_name", None)
+    migrated = migrate_entity_name(original)
+    if migrated is None:
+        return None
+    return {"original_name": migrated}
+
+
+async def _async_migrate_entity_names(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Translate already-registered German entity names to English (v6).
+
+    Delegates to HA's entity registry so the persisted ``original_name`` values
+    are rewritten without touching ``unique_id``. Defensive: a missing registry
+    or an already-migrated instance must never abort the config-entry migration.
+    """
+    try:
+        from homeassistant.helpers.entity_registry import async_migrate_entries
+
+        await async_migrate_entries(
+            hass, entry.entry_id, _entity_name_migration_callback
+        )
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning(
+            "Go Gauge: Entity-Name-Migration fuer %s fehlgeschlagen (%s) - "
+            "Namen bleiben unveraendert", entry.entry_id, err)
+
+
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate old config-entry versions to current (VERSION = 5).
+    """Migrate old config-entry versions to current (VERSION = 6).
 
     v1/v2: Monitor-Ara (host/port) -> token-basiert
     v3:    Multi-Token-Liste       -> EIN Workspace pro Instanz:
@@ -33,12 +68,14 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     v4:    ConfigEntry.unique_id war ein 16-Zeichen-Klartext-Fragment des
            Tokens -> SHA-256-Hash, damit kein Token-Teil in HA-Storage /
            Diagnostics persistiert wird (AUDIT-2026-09-04).
+    v6:    Bereits registrierte Entities von deutschen auf englische
+           original_name-Werte umstellen; unique_id bleibt stabil.
     """
-    if entry.version > 5:
+    if entry.version > 6:
         return False
 
     _LOGGER.info(
-        "Go Gauge: migriere Config-Entry %s von Version %s auf 5",
+        "Go Gauge: migriere Config-Entry %s von Version %s auf 6",
         entry.entry_id, entry.version,
     )
 
@@ -76,6 +113,12 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if token:
             new_unique_id = token_unique_id(token)
         entry.version = 5
+
+    if entry.version < 6:
+        # Bereits registrierte Entities heissen noch deutsch -> original_name
+        # uebersetzen; die unique_id bleibt unangetastet (eiserne Regel).
+        await _async_migrate_entity_names(hass, entry)
+        entry.version = 6
 
     hass.config_entries.async_update_entry(
         entry, data=data, options=options, unique_id=new_unique_id

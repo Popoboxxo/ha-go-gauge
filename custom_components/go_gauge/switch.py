@@ -9,7 +9,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    ENTITY_NAME_AUTO_UPDATE,
+    ENTITY_NAME_MODELS,
+    ENTITY_NAME_USAGE,
+)
 from .coordinator import GoGaugeCoordinator
 from .entity import GoGaugeEntityBase, persist_options
 
@@ -37,7 +42,7 @@ class AutoUpdateUsageSwitch(GoGaugeEntityBase, SwitchEntity):
         super().__init__(coordinator, entry)
         ws = getattr(coordinator, "ws_name", "") or "WS 1"
         self._attr_unique_id = f"{entry.entry_id}_auto_update_usage"
-        self._attr_name = f"Go Gauge {ws} Nutzung Auto-Update"
+        self._attr_name = f"Go Gauge {ws} {ENTITY_NAME_AUTO_UPDATE} {ENTITY_NAME_USAGE}"
 
     @property
     def is_on(self) -> bool | None:
@@ -65,7 +70,7 @@ class AutoUpdateModelsSwitch(GoGaugeEntityBase, SwitchEntity):
         super().__init__(coordinator, entry)
         ws = getattr(coordinator, "ws_name", "") or "WS 1"
         self._attr_unique_id = f"{entry.entry_id}_auto_update_models"
-        self._attr_name = f"Go Gauge {ws} Modelle Auto-Update"
+        self._attr_name = f"Go Gauge {ws} {ENTITY_NAME_AUTO_UPDATE} {ENTITY_NAME_MODELS}"
 
     @property
     def is_on(self) -> bool | None:

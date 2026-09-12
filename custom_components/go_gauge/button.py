@@ -8,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, ENTITY_NAME_REFRESH
 from .coordinator import GoGaugeCoordinator
 from .entity import GoGaugeEntityBase
 
@@ -29,7 +29,7 @@ class RefreshButton(GoGaugeEntityBase, ButtonEntity):
     unabhaengig von den Auto-Update-Schaltern."""
 
     _attr_icon = "mdi:refresh"
-    _attr_name = "Go Gauge Aktualisieren"
+    _attr_name = f"Go Gauge {ENTITY_NAME_REFRESH}"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)

@@ -46,6 +46,66 @@ WINDOW_LABELS = {"5h": "5h rolling", "week": "Weekly", "month": "Monthly"}
 # opencode.ai-API liefert kein exaktes Kalendermonat-Fenster, nur resetsAt.
 WINDOW_SECONDS = {"5h": 5 * 3600, "week": 7 * 24 * 3600, "month": 30 * 24 * 3600}
 
+# --- Entity naming ---------------------------------------------------------
+# Canonical English name fragments. Entity ``_attr_name`` values are built from
+# these (sensor/binary_sensor/number/switch/button) and the v6 migration table
+# below maps the legacy German fragments onto the very same constants, so new
+# installs and migrated installs always yield identical names.
+ENTITY_NAME_USAGE = "Usage"
+ENTITY_NAME_MODELS = "Models"
+ENTITY_NAME_AUTO_UPDATE = "Auto Update"
+ENTITY_NAME_FORECAST = "Forecast"
+ENTITY_NAME_REMAINING = "Remaining"
+ENTITY_NAME_TIME_TO_RESET = "Time to Reset"
+ENTITY_NAME_CHEAPEST_MODEL = "Cheapest Model"
+ENTITY_NAME_LIVE_MODELS = "Live Models"
+ENTITY_NAME_FREE_MODELS = "Free Models"
+ENTITY_NAME_WARNING_THRESHOLD = "Warning Threshold"
+ENTITY_NAME_PACE_RED_LIMIT = "Pace Red Limit"
+ENTITY_NAME_SUBSCRIPTION_ACTIVE = "Subscription Active"
+ENTITY_NAME_API_REACHABLE = "API Reachable"
+ENTITY_NAME_REFRESH = "Refresh"
+
+# v6: German -> English entity-name migration (see __init__.async_migrate_entry).
+# Applied as ORDERED ``str.replace`` pairs; the order is semantically required -
+# compound names ("Nutzung Auto-Update") must be replaced before the general
+# fragment they contain ("Nutzung"), otherwise the compound would be corrupted.
+ENTITY_NAME_MIGRATION: tuple[tuple[str, str], ...] = (
+    ("Nutzung Auto-Update", f"{ENTITY_NAME_AUTO_UPDATE} {ENTITY_NAME_USAGE}"),
+    ("Modelle Auto-Update", f"{ENTITY_NAME_AUTO_UPDATE} {ENTITY_NAME_MODELS}"),
+    ("Nutzung Refresh (Minuten)", f"{ENTITY_NAME_USAGE} Refresh (min)"),
+    ("Modelle Refresh (Minuten)", f"{ENTITY_NAME_MODELS} Refresh (min)"),
+    ("Günstigstes Modell", ENTITY_NAME_CHEAPEST_MODEL),
+    ("Live-Modelle", ENTITY_NAME_LIVE_MODELS),
+    ("Free-Modelle", ENTITY_NAME_FREE_MODELS),
+    ("Warnschwelle", ENTITY_NAME_WARNING_THRESHOLD),
+    ("Ampel Rot-Grenze", ENTITY_NAME_PACE_RED_LIMIT),
+    ("Abo aktiv", ENTITY_NAME_SUBSCRIPTION_ACTIVE),
+    ("API erreichbar", ENTITY_NAME_API_REACHABLE),
+    ("Restbudget", ENTITY_NAME_REMAINING),
+    ("Restzeit", ENTITY_NAME_TIME_TO_RESET),
+    ("Prognose", ENTITY_NAME_FORECAST),
+    ("Nutzung", ENTITY_NAME_USAGE),
+    ("Modelle", ENTITY_NAME_MODELS),
+    ("Aktualisieren", ENTITY_NAME_REFRESH),
+)
+
+
+def migrate_entity_name(original_name: str | None) -> str | None:
+    """Translate a legacy German entity name into the canonical English name.
+
+    Returns ``None`` when there is nothing to migrate - ``None``/empty input or
+    an already-English (unchanged) name - so callers can tell "changed" from
+    "unchanged". Idempotent: feeding the migrated output back returns ``None``.
+    """
+    if not original_name:
+        return None
+    migrated = original_name
+    for legacy, english in ENTITY_NAME_MIGRATION:
+        migrated = migrated.replace(legacy, english)
+    return migrated if migrated != original_name else None
+
+
 # Full browser UA - Cloudflare blocks non-browser agents (Error 1010)
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "

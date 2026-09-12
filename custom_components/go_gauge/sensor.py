@@ -1,6 +1,6 @@
 """Go Gauge HA - sensor platform (direct API data).
 
-Modell-Katalog = EIN Sensor ("Go Gauge Modelle") mit dem kompletten Katalog
+Modell-Katalog = EIN Sensor ("Go Gauge Models") mit dem kompletten Katalog
 als JSON-Attribute -> dynamisch, neue Modelle erscheinen automatisch ohne
 neue Entitäten. Zusätzlich: Live-Anzahl, Günstigstes, Free-Modelle als
 kompakte Lese-Sensoren.
@@ -21,7 +21,18 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, WINDOW_LABELS
+from .const import (
+    DOMAIN,
+    ENTITY_NAME_CHEAPEST_MODEL,
+    ENTITY_NAME_FORECAST,
+    ENTITY_NAME_FREE_MODELS,
+    ENTITY_NAME_LIVE_MODELS,
+    ENTITY_NAME_MODELS,
+    ENTITY_NAME_REMAINING,
+    ENTITY_NAME_TIME_TO_RESET,
+    ENTITY_NAME_USAGE,
+    WINDOW_LABELS,
+)
 from .coordinator import (
     GoGaugeCoordinator,
     burn_rate_per_hour,
@@ -106,7 +117,7 @@ class UsagePercentSensor(GoGaugeEntityBase, SensorEntity):
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_percent"
-        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Nutzung"
+        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} {ENTITY_NAME_USAGE}"
 
     def _status(self) -> str | None:
         ws = self._ws(self._key)
@@ -191,7 +202,7 @@ class UsageForecastSensor(GoGaugeEntityBase, SensorEntity):
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_forecast"
-        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Prognose"
+        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} {ENTITY_NAME_FORECAST}"
 
     @property
     def native_value(self) -> float | None:
@@ -253,7 +264,7 @@ class RemainingBudgetSensor(GoGaugeEntityBase, SensorEntity):
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_remaining"
-        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Restbudget"
+        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} {ENTITY_NAME_REMAINING}"
 
     @property
     def native_value(self) -> float | None:
@@ -273,7 +284,7 @@ class TimeUntilResetSensor(GoGaugeEntityBase, SensorEntity):
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_time_to_reset"
-        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Restzeit"
+        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} {ENTITY_NAME_TIME_TO_RESET}"
 
     @property
     def native_value(self) -> float | None:
@@ -319,7 +330,7 @@ class ModelCatalogSensor(GoGaugeAccountEntityBase, SensorEntity):
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_model_catalog"
-        self._attr_name = "Go Gauge Modelle"
+        self._attr_name = f"Go Gauge {ENTITY_NAME_MODELS}"
         # Cache fuer extra_state_attributes, invalidiert ueber
         # "models_updated_at" (aendert sich nur bei echtem Modell-Refresh,
         # nicht bei jedem Coordinator-Poll) - vermeidet dict-Copy +
@@ -383,7 +394,7 @@ class LiveModelsCountSensor(GoGaugeAccountEntityBase, SensorEntity):
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_models_live_count"
-        self._attr_name = "Go Gauge Live-Modelle"
+        self._attr_name = f"Go Gauge {ENTITY_NAME_LIVE_MODELS}"
 
     @property
     def native_value(self) -> int | None:
@@ -399,7 +410,7 @@ class CheapestModelSensor(GoGaugeAccountEntityBase, SensorEntity):
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_cheapest_model"
-        self._attr_name = "Go Gauge Günstigstes Modell"
+        self._attr_name = f"Go Gauge {ENTITY_NAME_CHEAPEST_MODEL}"
 
     @property
     def native_value(self) -> str | None:
@@ -420,7 +431,7 @@ class FreeModelsSensor(GoGaugeAccountEntityBase, SensorEntity):
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_free_models"
-        self._attr_name = "Go Gauge Free-Modelle"
+        self._attr_name = f"Go Gauge {ENTITY_NAME_FREE_MODELS}"
 
     @property
     def native_value(self) -> str | None:

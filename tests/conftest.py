@@ -85,7 +85,9 @@ class _Flexible(types.ModuleType):
 # audit / the generic skill baseline) so a future test file that touches
 # them doesn't hit a fresh ImportError: helpers.entity, helpers.storage,
 # helpers.service, helpers.config_validation, exceptions, const, util,
-# util.dt.
+# util.dt. helpers.entity_registry is imported (function-locally) by the
+# v6 entity-name migration in __init__.py - see
+# tests/test_entity_name_migration.py.
 _FAKE_HA_MODULES = [
     "homeassistant",
     "homeassistant.core",
@@ -97,6 +99,7 @@ _FAKE_HA_MODULES = [
     "homeassistant.helpers",
     "homeassistant.helpers.entity",
     "homeassistant.helpers.entity_platform",
+    "homeassistant.helpers.entity_registry",
     "homeassistant.helpers.update_coordinator",
     "homeassistant.helpers.aiohttp_client",
     "homeassistant.helpers.storage",
