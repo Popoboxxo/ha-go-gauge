@@ -2,7 +2,7 @@
 
 **The gauge for your OpenCode Go budget — usage, limits & cost-ratio right on your dashboard.**
 
-![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5) ![Version](https://img.shields.io/badge/version-1.5.0-blue)
+[![Release](https://img.shields.io/github/v/release/Popoboxxo/ha-go-gauge?sort=semver&display_name=tag)](https://github.com/Popoboxxo/ha-go-gauge/releases) [![Validate](https://github.com/Popoboxxo/ha-go-gauge/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/Popoboxxo/ha-go-gauge/actions/workflows/validate.yml) [![Release Check](https://github.com/Popoboxxo/ha-go-gauge/actions/workflows/release-check.yml/badge.svg?branch=main)](https://github.com/Popoboxxo/ha-go-gauge/actions/workflows/release-check.yml) [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/use/repositories/) [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.6%2B-41BDF5.svg)](https://www.home-assistant.io/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Eigenständige [HACS](https://hacs.xyz)-Custom-Integration, die **direkt** gegen die
 OpenCode-Go-API (`opencode.ai`) spricht — kein Monitor, kein Dashboard, keine
