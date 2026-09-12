@@ -312,6 +312,19 @@ views:
       # --- Modell-Katalog / Konto (Catalog Owner only / genau einmal) ---------
       # Konto-weites Panel unterhalb des Grids; die Account-Entities existieren
       # genau einmal (Catalog Owner), nicht pro Workspace.
+      #
+      # HINWEIS: Die hier genannten Account-entity_ids (sensor.go_gauge_models,
+      # sensor.go_gauge_live_models, sensor.go_gauge_cheapest_model,
+      # sensor.go_gauge_free_models sowie binary_sensor.go_gauge_api_reachable
+      # in der globalen Kopfzeile) sind ILLUSTRATIV und koennen je nach
+      # Device-Prefix und Systemsprache abweichen. Verbindlich ist der
+      # unique_id-Suffix-Match aus der Entity-Registry:
+      #   _model_catalog      -> sensor.<...>_model_catalog
+      #   _models_live_count  -> sensor.<...>_models_live_count
+      #   _cheapest_model     -> sensor.<...>_cheapest_model
+      #   _free_models        -> sensor.<...>_free_models
+      #   _api_reachable      -> binary_sensor.<...>_api_reachable
+      # Siehe docs/dashboards/entity-map.yaml und docs/dashboards/README.md.
       - type: entities
         title: Modell-Katalog / Konto
         entities:
