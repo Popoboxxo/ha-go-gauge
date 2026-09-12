@@ -8,11 +8,10 @@ like 'no_subscription' status and missing windows.
 These tests extract the sensor logic phase from manual_offline_smoke.py and run
 as pure pytest, making them part of the automated CI pipeline.
 """
-from datetime import datetime
-import json
 import importlib.util
+import json
 import sys
-import types
+from datetime import datetime
 from pathlib import Path
 
 # Base homeassistant.* module fakes are installed by conftest.py before this

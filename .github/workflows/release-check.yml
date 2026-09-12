@@ -1,0 +1,33 @@
+name: Release Check
+
+# Least privilege: the version-sync check only reads the checkout and the
+# release ref; no job writes back to the repository.
+permissions:
+  contents: read
+
+# HACS binds the distributed version to the tag of the latest published GitHub
+# release, while Home Assistant reports `manifest.json:version`. Tag and
+# manifest must match (ignoring the tag's leading `v`) or HACS/HA report a
+# stale version. This workflow enforces that on every release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  version-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # On `release`, TAG_NAME is the published tag and the comparison is
+      # enforced. On `workflow_dispatch` it is the selected ref: a branch name
+      # is skipped gracefully (exit 0), only a vX.Y.Z ref is compared.
+      # No secrets: only the built-in GITHUB_TOKEN / ref name are used.
+      - name: Verify tag <-> manifest version
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name || github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: python scripts/check_version_sync.py

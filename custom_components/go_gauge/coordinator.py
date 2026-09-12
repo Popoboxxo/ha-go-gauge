@@ -73,7 +73,11 @@ def efficiency(prices: dict[str, Any] | None) -> dict[str, Any] | None:
     if prices.get("free"):
         return {"usd_per_1m_mixed": 0.0, "month_req_per_usd": None, "free": True}
     try:
-        mixed = 0.8 * _pnum(prices["in"]) + 0.2 * _pnum(prices["out"])
+        in_price = _pnum(prices["in"])
+        out_price = _pnum(prices["out"])
+        mixed: float | None = None
+        if in_price is not None and out_price is not None:
+            mixed = 0.8 * in_price + 0.2 * out_price
     except (KeyError, TypeError):
         mixed = None
     req_m = (prices.get("req") or [None, None, None])[2]
@@ -293,6 +297,12 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     (or a manual service call) triggers an update.
     """
 
+    # Set by the config-entry setup after construction (workspace display name
+    # and catalog-ownership flag). Declared here so platform entities that read
+    # them type-check against GoGaugeCoordinator instead of the HA base type.
+    ws_name: str
+    is_catalog_owner: bool
+
     def __init__(self, hass: HomeAssistant, tokens: list[str],
                  options: dict[str, Any] | None = None) -> None:
         self.hass = hass
@@ -426,7 +436,11 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if not is_synthetic_error and "status" not in res:
                         missing_fields.add("status")
                     api = res.get("usage") or {}
-                    for api_key, win in (("rolling", "5h"), ("weekly", "week"), ("monthly", "month")):
+                    for api_key, win in (
+                        ("rolling", "5h"),
+                        ("weekly", "week"),
+                        ("monthly", "month"),
+                    ):
                         if not is_synthetic_error and api_key not in api:
                             missing_fields.add(f"usage.{api_key}")
                         blk = api.get(api_key) or {}
@@ -457,7 +471,10 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # unten (nach diesem Try/Except-Block) pro Workspace
                     # gesetzt, ist an dieser Stelle also fuer "old" nicht
                     # zuverlaessig verfuegbar (Audit 2026-09-04).
-                    entry["note"] = f"Abruf fehlgeschlagen, letzter bekannter Stand beibehalten: {err}"
+                    entry["note"] = (
+                        f"Abruf fehlgeschlagen, letzter bekannter Stand "
+                        f"beibehalten: {err}"
+                    )
                     _LOGGER.warning("Go Gauge %s: Abruf fehlgeschlagen (%s) - behalte alten Stand",
                                     key, err)
                 fresh.append(entry)
@@ -492,7 +509,8 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             models_due = (
                 self.auto_models
                 and (models_block is None
-                     or now - (self.last_models_fetch or now) >= timedelta(minutes=self.models_minutes))
+                     or now - (self.last_models_fetch or now)
+                     >= timedelta(minutes=self.models_minutes))
             )
             if models_block is None and not self.auto_models:
                 # Erster Start mit ausgeschaltetem Auto-Models: einmal laden
@@ -518,8 +536,12 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return {
             "fetched_at": now.isoformat(),
-            "last_usage_fetch": self.last_usage_fetch.isoformat() if self.last_usage_fetch else None,
-            "last_models_fetch": self.last_models_fetch.isoformat() if self.last_models_fetch else None,
+            "last_usage_fetch": (
+                self.last_usage_fetch.isoformat() if self.last_usage_fetch else None
+            ),
+            "last_models_fetch": (
+                self.last_models_fetch.isoformat() if self.last_models_fetch else None
+            ),
             "auto_usage": self.auto_usage,
             "auto_models": self.auto_models,
             "usage_refresh_minutes": self.usage_minutes,

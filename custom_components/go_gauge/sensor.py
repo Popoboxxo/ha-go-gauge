@@ -233,7 +233,8 @@ class UsagePaceSensor(GoGaugeEntityBase, SensorEntity):
     def icon(self) -> str:
         return {"green": "mdi:check-circle-outline",
                 "yellow": "mdi:alert-circle-outline",
-                "red": "mdi:close-circle-outline"}.get(self.native_value, "mdi:speedometer-medium")
+                "red": "mdi:close-circle-outline"}.get(self.native_value or "",
+                                                       "mdi:speedometer-medium")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -346,7 +347,11 @@ class ModelCatalogSensor(GoGaugeAccountEntityBase, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         block_raw = self.coordinator.data.get("models_block") or {}
         cache_key = block_raw.get("models_updated_at")
-        if cache_key is not None and cache_key == self._attrs_cache_key and self._attrs_cache is not None:
+        if (
+            cache_key is not None
+            and cache_key == self._attrs_cache_key
+            and self._attrs_cache is not None
+        ):
             return self._attrs_cache
 
         block = dict(block_raw)
