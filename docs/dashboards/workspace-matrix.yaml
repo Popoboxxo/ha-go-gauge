@@ -1,0 +1,267 @@
+# =============================================================================
+# Go Gauge - Workspace-Matrix (Multi-Workspace-Dashboard)
+# -----------------------------------------------------------------------------
+# Zweck   : Mehrere Go-Gauge-Workspaces nebeneinander auf einem Dashboard.
+#           Pro Workspace wird das decluttering-Template `go_gauge_workspace`
+#           einmal instanziiert; das responsive Grid kommt von `layout-card`.
+#           Je Kachel: Abo-/API-Status, Refresh-Button, drei vollstaendige
+#           Fenster-Bloecke (5h rolling / Weekly / Monthly) mit
+#           Reset/Remaining/Time-to-Reset/Burn-Rate und der Rate-Limit-Chip,
+#           dazu die Steuerungs-Sektion (Warning Threshold, Pace Red Limit,
+#           Auto-Update-Schalter).
+#
+# Custom  : benoetigte Frontend-Ressourcen (alle via HACS -> Frontend
+#           installieren, danach Home Assistant neu laden):
+#           - decluttering-card       -> custom:decluttering-card (Template)
+#           - layout-card             -> custom:layout-card (Grid-Layout)
+#           - Mushroom                -> custom:mushroom-* (Karten der Kachel)
+#           - vertical-stack-in-card  -> custom:vertical-stack-in-card
+#                                        (Kachel-Container)
+#
+# Bindung : entity_ids NIEMALS aus dem Friendly Name raten! Der Friendly Name
+#           haengt vom Workspace-Namen und der Systemsprache ab und ist damit
+#           NICHT stabil. Stabil ist ausschliesslich der unique_id-Suffix der
+#           Entity. Die realen entity_ids zur Laufzeit ueber die Entity-Registry
+#           aufloesen (unique_id-Suffix-Match) und die `[[variablen]]` unten
+#           entsprechend binden. Siehe docs/dashboards/entity-map.yaml und
+#           docs/dashboards/README.md (Abschnitt "workspace-matrix.yaml").
+#
+# Slugs   : Kanonische englische entity_id-Slugs seit v1.5.0 (v7-Migration;
+#           Quelle: custom_components/go_gauge/const.py, ENTITY_ID_MIGRATION).
+#           Deutsche Legacy-Slugs (z.B. *_nutzung, *_prognose, *_restbudget)
+#           sind ungueltig.
+# =============================================================================
+
+decluttering_templates:
+  # ---------------------------------------------------------------------------
+  # Template-Variablen (pro custom:decluttering-card -> `variables:` gebunden)
+  # ---------------------------------------------------------------------------
+  # [[ws_name]]     Anzeigename der Kachel (frei waehlbar, z.B. "App").
+  #
+  # [[slug_a]]      entity_id-Praefix fuer Entities mit TRAILING Fragment:
+  #                 usage / reset / rate_limited / subscription_active /
+  #                 auto_update_usage / auto_update_models.
+  #                 Form: <device>_go_gauge_<workspace> (nur das Praefix; das
+  #                 Fragment haengt das Template selbst an).
+  #
+  # [[slug_b]]      entity_id-Praefix fuer Entities mit TRAILING Fragment:
+  #                 forecast / pace / remaining / time_to_reset / burn_rate.
+  #                 Kann bei gemischt migrierten Registries vom [[slug_a]]-
+  #                 Praefix abweichen (Device-Praefix-Drift) - siehe
+  #                 entity-map.yaml und E2E-v7-entity-id-migration-2026-09-12.md.
+  #
+  # [[num_slug]]    entity_id-Praefix fuer number-Entities mit LEADING Fragment:
+  #                 Form <device>_go_gauge. Das Fragment (warning_threshold)
+  #                 und [[num_suffix]] folgen.
+  #
+  # [[num_suffix]]  Workspace-Suffix der number-Entities (z.B. "_app"); ergibt
+  #                 zusammen number.[[num_slug]]_warning_threshold[[num_suffix]].
+  #
+  # [[ampel_id]]    VOLLE entity_id der Pace-Red-Limit-Number, da der
+  #                 Workspace-Slug variiert:
+  #                 number.<device>_go_gauge_pace_red_limit_<workspace>.
+  #
+  # [[refresh_btn]] VOLLE entity_id des Refresh-Buttons (button.<...>_refresh).
+  #                 Der Button ist workspace-unabhaengig benannt und kollidiert
+  #                 bei mehreren Workspaces -> reale entity_id aus der Registry
+  #                 holen (unique_id-Suffix _refresh).
+  # ---------------------------------------------------------------------------
+  go_gauge_workspace:
+    default:
+      - ws_name: "Workspace"
+    card:
+      type: custom:vertical-stack-in-card
+      cards:
+        # --- Header: Abo, API, Refresh ---
+        - type: custom:mushroom-chips-card
+          alignment: center
+          chips:
+            - type: entity
+              entity: binary_sensor.[[slug_a]]_subscription_active
+              icon: mdi:shield-check-outline
+              content_info: state
+            - type: entity
+              entity: binary_sensor.go_gauge_api_reachable
+              icon: mdi:cloud-check-outline
+              content_info: none
+            - type: action
+              icon: mdi:refresh
+              tap_action:
+                action: call-service
+                service: button.press
+                target:
+                  entity_id: [[refresh_btn]]
+
+        - type: custom:mushroom-title-card
+          title: "[[ws_name]]"
+          subtitle: Nutzung & Steuerung
+
+        # --- Window: 5h rolling ---
+        - type: custom:mushroom-template-card
+          entity: sensor.[[slug_a]]_5h_rolling_usage
+          primary: "5h Rolling: {{ states('sensor.[[slug_a]]_5h_rolling_usage') }}%"
+          secondary: "Prog: {{ states('sensor.[[slug_b]]_5h_rolling_forecast') }}% | Pace: {{ states('sensor.[[slug_b]]_5h_rolling_pace') }}"
+          icon: mdi:speedometer
+          icon_color: >-
+            {% set p = states('sensor.[[slug_b]]_5h_rolling_pace') %}
+            {% if p == 'red' %}red{% elif p == 'yellow' %}orange{% else %}green{% endif %}
+          tap_action:
+            action: more-info
+        - type: custom:mushroom-chips-card
+          alignment: left
+          chips:
+            - type: entity
+              entity: sensor.[[slug_a]]_5h_rolling_reset
+              content_info: state
+            - type: entity
+              entity: sensor.[[slug_b]]_5h_rolling_remaining
+              content_info: state
+            - type: entity
+              entity: sensor.[[slug_b]]_5h_rolling_time_to_reset
+              content_info: state
+            - type: entity
+              entity: sensor.[[slug_b]]_5h_rolling_burn_rate
+              content_info: state
+            - type: conditional
+              conditions:
+                - entity: binary_sensor.[[slug_a]]_5h_rolling_rate_limited
+                  state: "on"
+              chip:
+                type: entity
+                entity: binary_sensor.[[slug_a]]_5h_rolling_rate_limited
+                icon_color: red
+
+        # --- Window: Weekly ---
+        - type: custom:mushroom-template-card
+          entity: sensor.[[slug_a]]_weekly_usage
+          primary: "Weekly: {{ states('sensor.[[slug_a]]_weekly_usage') }}%"
+          secondary: "Prog: {{ states('sensor.[[slug_b]]_weekly_forecast') }}% | Pace: {{ states('sensor.[[slug_b]]_weekly_pace') }}"
+          icon: mdi:speedometer
+          icon_color: >-
+            {% set p = states('sensor.[[slug_b]]_weekly_pace') %}
+            {% if p == 'red' %}red{% elif p == 'yellow' %}orange{% else %}green{% endif %}
+          tap_action:
+            action: more-info
+        - type: custom:mushroom-chips-card
+          alignment: left
+          chips:
+            - type: entity
+              entity: sensor.[[slug_a]]_weekly_reset
+              content_info: state
+            - type: entity
+              entity: sensor.[[slug_b]]_weekly_remaining
+              content_info: state
+            - type: entity
+              entity: sensor.[[slug_b]]_weekly_time_to_reset
+              content_info: state
+            - type: entity
+              entity: sensor.[[slug_b]]_weekly_burn_rate
+              content_info: state
+            - type: conditional
+              conditions:
+                - entity: binary_sensor.[[slug_a]]_weekly_rate_limited
+                  state: "on"
+              chip:
+                type: entity
+                entity: binary_sensor.[[slug_a]]_weekly_rate_limited
+                icon_color: red
+
+        # --- Window: Monthly ---
+        - type: custom:mushroom-template-card
+          entity: sensor.[[slug_a]]_monthly_usage
+          primary: "Monthly: {{ states('sensor.[[slug_a]]_monthly_usage') }}%"
+          secondary: "Prog: {{ states('sensor.[[slug_b]]_monthly_forecast') }}% | Pace: {{ states('sensor.[[slug_b]]_monthly_pace') }}"
+          icon: mdi:speedometer
+          icon_color: >-
+            {% set p = states('sensor.[[slug_b]]_monthly_pace') %}
+            {% if p == 'red' %}red{% elif p == 'yellow' %}orange{% else %}green{% endif %}
+          tap_action:
+            action: more-info
+        - type: custom:mushroom-chips-card
+          alignment: left
+          chips:
+            - type: entity
+              entity: sensor.[[slug_a]]_monthly_reset
+              content_info: state
+            - type: entity
+              entity: sensor.[[slug_b]]_monthly_remaining
+              content_info: state
+            - type: entity
+              entity: sensor.[[slug_b]]_monthly_time_to_reset
+              content_info: state
+            - type: entity
+              entity: sensor.[[slug_b]]_monthly_burn_rate
+              content_info: state
+            - type: conditional
+              conditions:
+                - entity: binary_sensor.[[slug_a]]_monthly_rate_limited
+                  state: "on"
+              chip:
+                type: entity
+                entity: binary_sensor.[[slug_a]]_monthly_rate_limited
+                icon_color: red
+
+        # --- Control ---
+        - type: custom:mushroom-title-card
+          title: Steuerung
+        - type: grid
+          columns: 2
+          square: false
+          cards:
+            # Label "Warnschwelle" -> Entity "Warning Threshold"
+            - type: custom:mushroom-number-card
+              entity: number.[[num_slug]]_warning_threshold[[num_suffix]]
+              name: Warnschwelle
+              display_mode: buttons
+              icon: none
+            # Label "Ampel Limit" -> Entity "Pace Red Limit"
+            - type: custom:mushroom-number-card
+              entity: [[ampel_id]]
+              name: Ampel Limit
+              display_mode: buttons
+              icon: none
+            # Label "Auto Nutzung" -> Entity "Auto Update Usage"
+            - type: custom:mushroom-entity-card
+              entity: switch.[[slug_a]]_auto_update_usage
+              name: Auto Nutzung
+              icon: mdi:autorenew
+              tap_action:
+                action: toggle
+            # Label "Auto Modelle" -> Entity "Auto Update Models"
+            - type: custom:mushroom-entity-card
+              entity: switch.[[slug_a]]_auto_update_models
+              name: Auto Modelle
+              icon: mdi:autorenew
+              tap_action:
+                action: toggle
+
+title: Go Gauge Matrix
+views:
+  - title: "Go Gauge Workspaces"
+    path: go-gauge-workspaces
+    icon: mdi:view-dashboard
+    panel: true
+    cards:
+      - type: custom:layout-card
+        layout_type: custom:grid-layout
+        layout:
+          grid-template-columns: "1fr 1fr 1fr 1fr"
+          grid-gap: "16px"
+          mediaquery:
+            "(max-width: 1200px)":
+              grid-template-columns: "1fr 1fr"
+            "(max-width: 600px)":
+              grid-template-columns: "1fr"
+        cards:
+          # Beispiel-Workspace "App": die Slugs werden ueber den
+          # unique_id-Suffix aus der Entity-Registry ermittelt (NIE raten).
+          - type: custom:decluttering-card
+            template: go_gauge_workspace
+            variables:
+              - ws_name: "App"
+              - slug_a: "go_gauge_ha_go_gauge_app"
+              - slug_b: "software_go_gauge_app"
+              - num_slug: "go_gauge_ha_go_gauge"
+              - num_suffix: "_app"
+              - ampel_id: "number.software_go_gauge_app_go_gauge_pace_red_limit_app"
+              - refresh_btn: "button.go_gauge_ha_go_gauge_refresh_3"

@@ -2,7 +2,7 @@
 
 Fertige Dashboard-Vorlagen (YAML), mit denen sich Nutzung, Limits, Pace und
 Modell-Katalog eines Go-Gauge-Workspaces direkt in Home Assistant anzeigen
-lassen. Beide Vorlagen sind reine YAML-Dateien ohne Python-Bezug; die
+lassen. Alle Vorlagen sind reine YAML-Dateien ohne Python-Bezug; die
 Integration selbst wird dadurch nicht verändert.
 
 ## 1. Überblick
@@ -11,9 +11,12 @@ Integration selbst wird dadurch nicht verändert.
 |---|---|---|
 | [`workspace-standard.yaml`](workspace-standard.yaml) | Nur Home-Assistant-Bordmittel (markdown, grid, gauge, entities, history-graph) | keine |
 | [`workspace-mushroom.yaml`](workspace-mushroom.yaml) | Mushroom-Karten (`custom:mushroom-*`) | Mushroom (via HACS) |
+| [`workspace-matrix.yaml`](workspace-matrix.yaml) | Multi-Workspace-Matrix: `decluttering-card`-Kachel je Workspace im `layout-card`-Grid, Kacheln im Mushroom-Look | decluttering-card, layout-card, Mushroom, vertical-stack-in-card |
 | [`entity-map.yaml`](entity-map.yaml) | maschinenlesbare Entity-/Bindungs-Map | keine |
 
-Beide Aufsätze liefern denselben Informationsumfang:
+Die Standard- und die Mushroom-Vorlage liefern denselben Informationsumfang
+(die Matrix-Vorlage zeigt dieselben Fenster- und Steuerungswerte je Workspace
+als Kachel; Nutzungsverlauf und Modell-Katalog fehlen dort bewusst):
 
 - Kopfzeile mit Abo-Status, API-Status und Status/Note je Fenster,
 - pro Fenster (5h rolling / Weekly / Monthly) Nutzung, Pace, Prognose,
@@ -21,8 +24,8 @@ Beide Aufsätze liefern denselben Informationsumfang:
 - einen Nutzungsverlauf,
 - eine Steuerungs-Sektion (Warnschwelle, Ampel Rot-Grenze, Refresh-Intervalle,
   Auto-Update-Schalter, manueller Refresh),
-- eine Katalog-/Konto-Sektion (Modelle, Live-Anzahl, günstigstes Modell,
-  Free-Modelle, API-Erreichbarkeit).
+- eine Katalog-/Konto-Sektion (Models, Live Models, Cheapest Model,
+  Free Models, API Reachable).
 
 Screenshots:
 
@@ -49,6 +52,17 @@ Mushroom-Dashboard — Screenshot folgt (Platzhalter).
 - Mushroom stellt die Ressourcen `custom:mushroom-*` bereit. `card-mod` ist
   ausdrücklich **nicht** erforderlich.
 
+### Matrix (`workspace-matrix.yaml`)
+
+- HACS installieren (falls nicht vorhanden) und im HACS-Frontend **alle vier**
+  Ressourcen installieren, danach Home Assistant neu laden:
+  - **decluttering-card** (`custom:decluttering-card`) — Kachel-Template
+    `go_gauge_workspace`,
+  - **layout-card** (`custom:layout-card`) — responsives Grid-Layout,
+  - **Mushroom** (`custom:mushroom-*`) — Karten der Kachel,
+  - **vertical-stack-in-card** (`custom:vertical-stack-in-card`) — Kachel-Container.
+- `card-mod` ist ausdrücklich **nicht** erforderlich.
+
 ### Optional / weiterführend (NICHT Pflicht)
 
 Diese Ressourcen sind für die Vorlagen nicht nötig, können den Komfort aber
@@ -64,8 +78,8 @@ erhöhen:
 
 1. In Home Assistant ein neues Dashboard anlegen bzw. ein vorhandenes öffnen.
 2. Das Dashboard in den **Rohkonfigurationseditor** wechseln.
-3. Den Inhalt der gewünschten Vorlage
-   (`workspace-standard.yaml` oder `workspace-mushroom.yaml`) einfügen.
+3. Den Inhalt der gewünschten Vorlage (`workspace-standard.yaml`,
+   `workspace-mushroom.yaml` oder `workspace-matrix.yaml`) einfügen.
 4. Den Platzhalter `WS` durch den echten Workspace-Slug ersetzen
    (siehe Abschnitt 4 und 5).
 5. Speichern.
@@ -133,8 +147,8 @@ raten.
 **c) Workspace und Konto bestimmen.** Ein Workspace gehört zum Gerät
 `Go Gauge {ws_name}` mit Identifier `go_gauge`/`<entry_id>`. Das Konto-Gerät
 hat den Identifier `go_gauge`/`account` und existiert genau einmal
-(Catalog Owner); seine Entities (Katalog, Live-Modelle, Günstigstes,
-Free-Modelle, API erreichbar) existieren entsprechend genau einmal.
+(Catalog Owner); seine Entities (Models, Live Models, Cheapest Model,
+Free Models, API Reachable) existieren entsprechend genau einmal.
 
 **d) Substitution.** `WS` durch den realen Workspace-Slug ersetzen. Alternativ
 in Jinja-Templates dynamisch auflösen, indem über die Attribute
@@ -147,16 +161,74 @@ des `_model_catalog`-Sensors (`catalog_json`, `ranking_by_cost`,
 `free_models`, `cheapest_model`, `cheapest_overall`, `count`, `live_count`,
 `models_updated_at`). Es existieren **keine** Einzel-Entities pro Modell.
 
-## 6. FAQ / Known Gotchas
+## 6. `workspace-matrix.yaml` — Variablen & Bindung
+
+`workspace-matrix.yaml` zeigt **mehrere Workspaces nebeneinander**: ein
+`custom:decluttering-card`-Template (`go_gauge_workspace`) wird pro Workspace
+einmal instanziiert, das Grid kommt von `custom:layout-card`.
+
+### Benötigte Custom-Ressourcen
+
+Alle vier via HACS → Frontend installieren, danach Home Assistant neu laden:
+
+| Ressource | Aufgabe |
+|---|---|
+| `decluttering-card` | Kachel-Template `go_gauge_workspace` inkl. `[[variablen]]` |
+| `layout-card` | responsives Grid (`grid-template-columns`) |
+| Mushroom | Karten der Kachel (`custom:mushroom-*`) |
+| `vertical-stack-in-card` | Container, der die Karten einer Kachel zusammenfasst |
+
+### `[[...]]`-Variablen
+
+Die Kachel ist über sieben Variablen parametrisiert. Sie werden pro
+`custom:decluttering-card` im `variables:`-Block gebunden:
+
+| Variable | Bedeutung | Beispiel |
+|---|---|---|
+| `[[ws_name]]` | Anzeigename der Kachel (frei wählbar) | `"App"` |
+| `[[slug_a]]` | `entity_id`-Präfix für Entities mit **trailing** Fragment: `usage`, `reset`, `rate_limited`, `subscription_active`, `auto_update_usage`, `auto_update_models` | `"go_gauge_ha_go_gauge_app"` |
+| `[[slug_b]]` | `entity_id`-Präfix für Entities mit **trailing** Fragment: `forecast`, `pace`, `remaining`, `time_to_reset`, `burn_rate` | `"software_go_gauge_app"` |
+| `[[num_slug]]` | `entity_id`-Präfix für `number`-Entities mit **leading** Fragment: `<device>_go_gauge` | `"go_gauge_ha_go_gauge"` |
+| `[[num_suffix]]` | Workspace-Suffix der `number`-Entities | `"_app"` |
+| `[[ampel_id]]` | **volle** `entity_id` der Pace-Red-Limit-Number: `number.<device>_go_gauge_pace_red_limit_<workspace>` | `"number.software_go_gauge_app_go_gauge_pace_red_limit_app"` |
+| `[[refresh_btn]]` | **volle** `entity_id` des Refresh-Buttons: `button.<...>_refresh` | `"button.go_gauge_ha_go_gauge_refresh_3"` |
+
+In der Kachel ergibt sich damit z. B. `sensor.[[slug_a]]_5h_rolling_usage`,
+`sensor.[[slug_b]]_weekly_forecast` oder
+`number.[[num_slug]]_warning_threshold[[num_suffix]]`. Die drei Fensterblöcke
+(5h rolling / Weekly / Monthly) sind vollständig ausgeschrieben; der
+Rate-Limit-Chip erscheint nur, wenn der jeweilige
+`binary_sensor.[[slug_a]]_<fenster>_rate_limited` den State `on` hat.
+
+### Bindungs-Caveat
+
+`slug_a` und `slug_b` können sich unterscheiden: Nach der v7-Migration tragen
+bereits registrierte Entities ein anderes Device-Präfix als neu registrierte
+(siehe [`E2E-v7-entity-id-migration-2026-09-12.md`](../E2E-v7-entity-id-migration-2026-09-12.md),
+Befund ND-1). Die Slugs deshalb **nie aus dem Friendly Name raten**, sondern
+die reale `entity_id` über den `unique_id`-Suffix aus der Entity-Registry
+auflösen ([`entity-map.yaml`](entity-map.yaml), Abschnitt 5 b). Der
+Refresh-Button `button.<...>_refresh` ist workspace-unabhängig benannt und
+kollidiert bei mehreren Workspaces (`..._2`, `..._3`, …) — seine reale
+`entity_id` daher ebenfalls aus der Registry holen (unique_id-Suffix
+`_refresh`).
+
+> **Slug-Sprache:** Seit v1.5.0 sind die `entity_id`-Slugs englisch
+> (`*_usage`, `*_forecast`, `*_remaining`, `*_time_to_reset`, …;
+> Quelle: `custom_components/go_gauge/const.py`, `ENTITY_ID_MIGRATION`).
+> Deutsche Legacy-Slugs (`*_nutzung`, `*_prognose`, `*_restbudget`,
+> `*_restzeit`) sind in Dashboards **nicht** mehr gültig.
+
+## 7. FAQ / Known Gotchas
 
 - **Button-Name kollidiert bei mehreren Workspaces.** Der Refresh-Button heißt
-  ohne Workspace-Namen `Go Gauge Aktualisieren`; bei mehreren Workspaces wird
+  ohne Workspace-Namen `Go Gauge Refresh`; bei mehreren Workspaces wird
   seine `entity_id` von Home Assistant zu `..._2` (und so weiter) abgeändert.
   Die reale `entity_id` deshalb immer über den `unique_id`-Suffix `_refresh`
   aus der Registry holen.
 - **`_pace`-State ist ein englischer String.** Mögliche Werte: `green`,
   `yellow`, `red` (nicht übersetzt). Die Schwellen kommen aus den
-  Number-Entities Warnschwelle und Ampel Rot-Grenze.
+  Number-Entities Warning Threshold und Pace Red Limit.
 - **`_forecast` kann größer als 100 sein.** Die Prognose rechnet die aktuelle
   Nutzung linear auf das Fensterende hoch — Überschreitung ist gewollt und
   zeigt, dass das Tempo das Budget sprengt. Die `gauge`-Karte in der
@@ -164,7 +236,7 @@ des `_model_catalog`-Sensors (`catalog_json`, `ranking_by_cost`,
   deshalb zusätzlich als Entity anzeigen.
 - **Ohne Abo sind Nutzungs-Sensoren `unknown` (nicht 0).** Bei fehlendem Abo
   liefern die prozentualen Sensoren bewusst `unknown`, und der Binary Sensor
-  `... Abo aktiv` steht auf `off`. `unknown` nicht als 0 interpretieren.
+  `... Subscription Active` steht auf `off`. `unknown` nicht als 0 interpretieren.
 - **Mushroom-Karten: „Entity not available".** `custom:mushroom-*`-Karten
   lösen die Entity bei mehreren Workspaces über die `entity_id` auf; fehlt
   sie, zeigt die Karte „Entity not available". Dann die reale `entity_id`

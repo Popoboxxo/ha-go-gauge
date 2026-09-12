@@ -10,9 +10,17 @@
 # aus dem Friendly Name raten. `WS` ist ein Platzhalter fuer den realen
 # Workspace-Slug innerhalb einer entity_id.
 #
+# Sprache: Die `name_pattern`-Felder tragen die kanonischen ENGLISCHEN
+# Anzeigenamen (v1.5.0 / v6-Namensmigration). `unique_id_suffix` /
+# `unique_id_template` bleiben unveraendert - sie koennen semantisch vom
+# entity_id-Slug abweichen (z.B. `_percent` vs. entity_id `_usage`) und sind
+# bereits englisch. entity_id-Slugs sind seit v1.5.0 ebenfalls englisch
+# (v7-Migration, Quelle: const.py `ENTITY_ID_MIGRATION`).
+#
 # Pflege: Bei jeder Aenderung an custom_components/go_gauge/* nachziehen.
-# Abgeglichen mit: sensor.py, binary_sensor.py, number.py, switch.py, button.py,
-# entity.py, const.py.
+# Abgeglichen mit: v1.5.0 (englische entity_id-Slugs, v7-Migration) -
+# sensor.py, binary_sensor.py, number.py, switch.py, button.py, entity.py,
+# const.py (`ENTITY_ID_MIGRATION` / `ENTITY_NAME_*`).
 
 version: 1
 domain: go_gauge
@@ -43,7 +51,7 @@ entities:
     device: workspace
     unique_id_suffix: "_percent"
     unique_id_template: "{entry_id}_{workspace_key}_{window}_percent"
-    name_pattern: "Go Gauge {WS} {window_label} Nutzung"
+    name_pattern: "Go Gauge {WS} {window_label} Usage"
     window_specific: true
     unit: "%"
     state_class: measurement
@@ -63,7 +71,7 @@ entities:
     device: workspace
     unique_id_suffix: "_forecast"
     unique_id_template: "{entry_id}_{workspace_key}_{window}_forecast"
-    name_pattern: "Go Gauge {WS} {window_label} Prognose"
+    name_pattern: "Go Gauge {WS} {window_label} Forecast"
     window_specific: true
     unit: "%"
     state_class: measurement
@@ -84,7 +92,7 @@ entities:
     device: workspace
     unique_id_suffix: "_remaining"
     unique_id_template: "{entry_id}_{workspace_key}_{window}_remaining"
-    name_pattern: "Go Gauge {WS} {window_label} Restbudget"
+    name_pattern: "Go Gauge {WS} {window_label} Remaining"
     window_specific: true
     unit: "%"
     state_class: measurement
@@ -94,7 +102,7 @@ entities:
     device: workspace
     unique_id_suffix: "_time_to_reset"
     unique_id_template: "{entry_id}_{workspace_key}_{window}_time_to_reset"
-    name_pattern: "Go Gauge {WS} {window_label} Restzeit"
+    name_pattern: "Go Gauge {WS} {window_label} Time to Reset"
     window_specific: true
     device_class: duration
     unit: "h"
@@ -125,7 +133,7 @@ entities:
     device: workspace
     unique_id_suffix: "_subscription_active"
     unique_id_template: "{entry_id}_{workspace_key}_subscription_active"
-    name_pattern: "Go Gauge {WS} Abo aktiv"
+    name_pattern: "Go Gauge {WS} Subscription Active"
     window_specific: false
     device_class: connectivity
     attributes: [workspace_key, note]
@@ -135,7 +143,7 @@ entities:
     device: workspace
     unique_id_suffix: "_warn_percent"
     unique_id_template: "{entry_id}_warn_percent"
-    name_pattern: "Go Gauge Warnschwelle \u00b7 {WS}"
+    name_pattern: "Go Gauge Warning Threshold \u00b7 {WS}"
     window_specific: false
     unit: "%"
     min: 1
@@ -148,7 +156,7 @@ entities:
     device: workspace
     unique_id_suffix: "_pace_red_percent"
     unique_id_template: "{entry_id}_pace_red_percent"
-    name_pattern: "Go Gauge Ampel Rot-Grenze \u00b7 {WS}"
+    name_pattern: "Go Gauge Pace Red Limit \u00b7 {WS}"
     window_specific: false
     unit: "%"
     min: 1
@@ -161,7 +169,7 @@ entities:
     device: workspace
     unique_id_suffix: "_usage_refresh_minutes"
     unique_id_template: "{entry_id}_usage_refresh_minutes"
-    name_pattern: "Go Gauge Nutzung Refresh (Minuten) \u00b7 {WS}"
+    name_pattern: "Go Gauge Usage Refresh (min) \u00b7 {WS}"
     window_specific: false
     unit: "min"
     min: 1
@@ -173,7 +181,7 @@ entities:
     device: workspace
     unique_id_suffix: "_models_refresh_minutes"
     unique_id_template: "{entry_id}_models_refresh_minutes"
-    name_pattern: "Go Gauge Modelle Refresh (Minuten) \u00b7 {WS}"
+    name_pattern: "Go Gauge Models Refresh (min) \u00b7 {WS}"
     window_specific: false
     unit: "min"
     min: 1
@@ -186,7 +194,7 @@ entities:
     device: workspace
     unique_id_suffix: "_auto_update_usage"
     unique_id_template: "{entry_id}_auto_update_usage"
-    name_pattern: "Go Gauge {WS} Nutzung Auto-Update"
+    name_pattern: "Go Gauge {WS} Auto Update Usage"
     window_specific: false
     source: "switch.py:38-40"
   - logical: auto_update_models
@@ -194,7 +202,7 @@ entities:
     device: workspace
     unique_id_suffix: "_auto_update_models"
     unique_id_template: "{entry_id}_auto_update_models"
-    name_pattern: "Go Gauge {WS} Modelle Auto-Update"
+    name_pattern: "Go Gauge {WS} Auto Update Models"
     window_specific: false
     note: "Existiert pro Workspace-Instanz (nicht nur Catalog Owner)."
     source: "switch.py:66-68"
@@ -203,7 +211,7 @@ entities:
     device: workspace
     unique_id_suffix: "_refresh"
     unique_id_template: "{entry_id}_refresh"
-    name_pattern: "Go Gauge Aktualisieren"
+    name_pattern: "Go Gauge Refresh"
     window_specific: false
     note: "Friendly Name OHNE Workspace-Name -> entity_id kollidiert bei mehreren Workspaces (Suffix _2)."
     source: "button.py:32,36"
@@ -214,7 +222,7 @@ entities:
     device: account
     unique_id_suffix: "_model_catalog"
     unique_id_template: "{entry_id}_model_catalog"
-    name_pattern: "Go Gauge Modelle"
+    name_pattern: "Go Gauge Models"
     window_specific: false
     state_class: measurement
     catalog_owner_only: true
@@ -226,7 +234,7 @@ entities:
     device: account
     unique_id_suffix: "_models_live_count"
     unique_id_template: "{entry_id}_models_live_count"
-    name_pattern: "Go Gauge Live-Modelle"
+    name_pattern: "Go Gauge Live Models"
     window_specific: false
     state_class: measurement
     catalog_owner_only: true
@@ -236,7 +244,7 @@ entities:
     device: account
     unique_id_suffix: "_cheapest_model"
     unique_id_template: "{entry_id}_cheapest_model"
-    name_pattern: "Go Gauge G\u00fcnstigstes Modell"
+    name_pattern: "Go Gauge Cheapest Model"
     window_specific: false
     catalog_owner_only: true
     attributes: [cheapest_overall, ratio_usd_per_1m]
@@ -246,7 +254,7 @@ entities:
     device: account
     unique_id_suffix: "_free_models"
     unique_id_template: "{entry_id}_free_models"
-    name_pattern: "Go Gauge Free-Modelle"
+    name_pattern: "Go Gauge Free Models"
     window_specific: false
     catalog_owner_only: true
     note: "State = kommagetrennte Liste der kostenlosen Modelle."
@@ -256,7 +264,7 @@ entities:
     device: account
     unique_id_suffix: "_api_reachable"
     unique_id_template: "{entry_id}_api_reachable"
-    name_pattern: "Go Gauge API erreichbar"
+    name_pattern: "Go Gauge API Reachable"
     window_specific: false
     device_class: connectivity
     catalog_owner_only: true

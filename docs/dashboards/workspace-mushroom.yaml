@@ -11,6 +11,8 @@
 #           aus dem Friendly Name raten, sondern ueber die unique_id-Suffixe
 #           der Entity-Registry ermitteln (siehe entity-map.yaml und
 #           docs/dashboards/README.md).
+# Slugs   : Kanonische englische entity_id-Slugs seit v1.5.0 (v7-Migration;
+#           Quelle: custom_components/go_gauge/const.py ENTITY_ID_MIGRATION).
 # Hinweis : Bei mehreren Workspaces loesen die Template-/Number-Karten die
 #           Entitaet zunaechst ueber die entity_id (bzw. Suche) auf; fehlt die
 #           Entitaet, zeigt die Karte "Entity not available". Dann die echte
@@ -27,11 +29,11 @@ views:
         alignment: center
         chips:
           - type: entity
-            entity: binary_sensor.go_gauge_WS_abo_aktiv
+            entity: binary_sensor.go_gauge_WS_subscription_active
             icon: mdi:shield-check-outline
             content_info: state
           - type: entity
-            entity: binary_sensor.go_gauge_api_erreichbar
+            entity: binary_sensor.go_gauge_api_reachable
             icon: mdi:cloud-check-outline
             content_info: none
           - type: action
@@ -40,7 +42,7 @@ views:
               action: call-service
               service: button.press
               target:
-                entity_id: button.go_gauge_aktualisieren
+                entity_id: button.go_gauge_refresh
 
       - type: custom:mushroom-title-card
         title: "Go Gauge — WS"
@@ -50,12 +52,12 @@ views:
       - type: custom:mushroom-title-card
         title: 5h rolling
       - type: custom:mushroom-template-card
-        entity: sensor.go_gauge_WS_5h_rolling_nutzung
+        entity: sensor.go_gauge_WS_5h_rolling_usage
         primary: Nutzung
         secondary: >-
-          {{ states('sensor.go_gauge_WS_5h_rolling_nutzung') }} % ·
+          {{ states('sensor.go_gauge_WS_5h_rolling_usage') }} % ·
           Pace {{ states('sensor.go_gauge_WS_5h_rolling_pace') }} ·
-          Prognose {{ states('sensor.go_gauge_WS_5h_rolling_prognose') }} %
+          Prognose {{ states('sensor.go_gauge_WS_5h_rolling_forecast') }} %
         icon: mdi:speedometer
         icon_color: >-
           {% set p = states('sensor.go_gauge_WS_5h_rolling_pace') %}
@@ -71,15 +73,15 @@ views:
             name: Reset
             icon: mdi:timer-reset
           - type: custom:mushroom-entity-card
-            entity: sensor.go_gauge_WS_5h_rolling_prognose
+            entity: sensor.go_gauge_WS_5h_rolling_forecast
             name: Prognose
             icon: mdi:trending-up
           - type: custom:mushroom-entity-card
-            entity: sensor.go_gauge_WS_5h_rolling_restbudget
+            entity: sensor.go_gauge_WS_5h_rolling_remaining
             name: Restbudget
             icon: mdi:gauge
           - type: custom:mushroom-entity-card
-            entity: sensor.go_gauge_WS_5h_rolling_restzeit
+            entity: sensor.go_gauge_WS_5h_rolling_time_to_reset
             name: Restzeit
             icon: mdi:timer-sand
           - type: custom:mushroom-entity-card
@@ -95,12 +97,12 @@ views:
       - type: custom:mushroom-title-card
         title: Weekly
       - type: custom:mushroom-template-card
-        entity: sensor.go_gauge_WS_weekly_nutzung
+        entity: sensor.go_gauge_WS_weekly_usage
         primary: Nutzung
         secondary: >-
-          {{ states('sensor.go_gauge_WS_weekly_nutzung') }} % ·
+          {{ states('sensor.go_gauge_WS_weekly_usage') }} % ·
           Pace {{ states('sensor.go_gauge_WS_weekly_pace') }} ·
-          Prognose {{ states('sensor.go_gauge_WS_weekly_prognose') }} %
+          Prognose {{ states('sensor.go_gauge_WS_weekly_forecast') }} %
         icon: mdi:speedometer
         icon_color: >-
           {% set p = states('sensor.go_gauge_WS_weekly_pace') %}
@@ -116,15 +118,15 @@ views:
             name: Reset
             icon: mdi:timer-reset
           - type: custom:mushroom-entity-card
-            entity: sensor.go_gauge_WS_weekly_prognose
+            entity: sensor.go_gauge_WS_weekly_forecast
             name: Prognose
             icon: mdi:trending-up
           - type: custom:mushroom-entity-card
-            entity: sensor.go_gauge_WS_weekly_restbudget
+            entity: sensor.go_gauge_WS_weekly_remaining
             name: Restbudget
             icon: mdi:gauge
           - type: custom:mushroom-entity-card
-            entity: sensor.go_gauge_WS_weekly_restzeit
+            entity: sensor.go_gauge_WS_weekly_time_to_reset
             name: Restzeit
             icon: mdi:timer-sand
           - type: custom:mushroom-entity-card
@@ -140,12 +142,12 @@ views:
       - type: custom:mushroom-title-card
         title: Monthly
       - type: custom:mushroom-template-card
-        entity: sensor.go_gauge_WS_monthly_nutzung
+        entity: sensor.go_gauge_WS_monthly_usage
         primary: Nutzung
         secondary: >-
-          {{ states('sensor.go_gauge_WS_monthly_nutzung') }} % ·
+          {{ states('sensor.go_gauge_WS_monthly_usage') }} % ·
           Pace {{ states('sensor.go_gauge_WS_monthly_pace') }} ·
-          Prognose {{ states('sensor.go_gauge_WS_monthly_prognose') }} %
+          Prognose {{ states('sensor.go_gauge_WS_monthly_forecast') }} %
         icon: mdi:speedometer
         icon_color: >-
           {% set p = states('sensor.go_gauge_WS_monthly_pace') %}
@@ -161,15 +163,15 @@ views:
             name: Reset
             icon: mdi:timer-reset
           - type: custom:mushroom-entity-card
-            entity: sensor.go_gauge_WS_monthly_prognose
+            entity: sensor.go_gauge_WS_monthly_forecast
             name: Prognose
             icon: mdi:trending-up
           - type: custom:mushroom-entity-card
-            entity: sensor.go_gauge_WS_monthly_restbudget
+            entity: sensor.go_gauge_WS_monthly_remaining
             name: Restbudget
             icon: mdi:gauge
           - type: custom:mushroom-entity-card
-            entity: sensor.go_gauge_WS_monthly_restzeit
+            entity: sensor.go_gauge_WS_monthly_time_to_reset
             name: Restzeit
             icon: mdi:timer-sand
           - type: custom:mushroom-entity-card
@@ -188,60 +190,66 @@ views:
         columns: 2
         square: false
         cards:
+          # Label "Warnschwelle" -> Entity "Warning Threshold"
           - type: custom:mushroom-number-card
-            entity: number.go_gauge_warnschwelle_WS
+            entity: number.go_gauge_warning_threshold_WS
             name: Warnschwelle
             icon: mdi:alert-octagon-outline
             display_mode: buttons
+          # Label "Ampel Rot-Grenze" -> Entity "Pace Red Limit"
           - type: custom:mushroom-number-card
-            entity: number.go_gauge_ampel_rot_grenze_WS
+            entity: number.go_gauge_pace_red_limit_WS
             name: Ampel Rot-Grenze
             icon: mdi:alert-decagram-outline
             display_mode: buttons
+          # Label "Nutzung Refresh (Min)" -> Entity "Usage Refresh (min)"
           - type: custom:mushroom-number-card
-            entity: number.go_gauge_nutzung_refresh_minuten_WS
+            entity: number.go_gauge_usage_refresh_min_WS
             name: Nutzung Refresh (Min)
             icon: mdi:timer-outline
             display_mode: buttons
+          # Label "Modelle Refresh (Min)" -> Entity "Models Refresh (min)"
           - type: custom:mushroom-number-card
-            entity: number.go_gauge_modelle_refresh_minuten_WS
+            entity: number.go_gauge_models_refresh_min_WS
             name: Modelle Refresh (Min)
             icon: mdi:timer-outline
             display_mode: buttons
+          # Label "Nutzung Auto-Update" -> Entity "Auto Update Usage"
           - type: custom:mushroom-entity-card
-            entity: switch.go_gauge_WS_nutzung_auto_update
+            entity: switch.go_gauge_WS_auto_update_usage
             name: Nutzung Auto-Update
             icon: mdi:autorenew
             tap_action:
               action: toggle
+          # Label "Modelle Auto-Update" -> Entity "Auto Update Models"
           - type: custom:mushroom-entity-card
-            entity: switch.go_gauge_WS_modelle_auto_update
+            entity: switch.go_gauge_WS_auto_update_models
             name: Modelle Auto-Update
             icon: mdi:autorenew
             tap_action:
               action: toggle
           # Friendly Name ohne Workspace-Name: bei mehreren Workspaces wird die
-          # entity_id zu button.go_gauge_aktualisieren_2 (siehe README, Gotcha).
+          # entity_id zu button.go_gauge_refresh_2 (siehe README, Gotcha).
           - type: custom:mushroom-entity-card
-            entity: button.go_gauge_aktualisieren
+            entity: button.go_gauge_refresh
             name: Aktualisieren
             icon: mdi:refresh
             tap_action:
               action: call-service
               service: button.press
               target:
-                entity_id: button.go_gauge_aktualisieren
+                entity_id: button.go_gauge_refresh
 
       # --- Modell-Katalog / Konto -------------------------------------------
       - type: custom:mushroom-title-card
         title: Modell-Katalog / Konto
       - type: custom:mushroom-template-card
-        entity: sensor.go_gauge_modelle
+        entity: sensor.go_gauge_models
         primary: Modell-Katalog
         secondary: >-
-          {{ states('sensor.go_gauge_live_modelle') }} live ·
-          günstigstes: {{ states('sensor.go_gauge_gunstigstes_modell') }} ·
-          free: {{ states('sensor.go_gauge_free_modelle') }}
+          {{ states('sensor.go_gauge_live_models') }} live ·
+          günstigstes: {{ states('sensor.go_gauge_cheapest_model') }} ·
+          free: {{ states('sensor.go_gauge_free_models') }}
         icon: mdi:format-list-bulleted
         icon_color: blue
       - type: grid
@@ -249,22 +257,22 @@ views:
         square: false
         cards:
           - type: custom:mushroom-entity-card
-            entity: sensor.go_gauge_modelle
+            entity: sensor.go_gauge_models
             name: Modelle (Anzahl)
             icon: mdi:format-list-bulleted
           - type: custom:mushroom-entity-card
-            entity: sensor.go_gauge_live_modelle
+            entity: sensor.go_gauge_live_models
             name: Live-Modelle
             icon: mdi:check-network-outline
           - type: custom:mushroom-entity-card
-            entity: sensor.go_gauge_gunstigstes_modell
+            entity: sensor.go_gauge_cheapest_model
             name: Günstigstes Modell
             icon: mdi:crown-outline
           - type: custom:mushroom-entity-card
-            entity: sensor.go_gauge_free_modelle
+            entity: sensor.go_gauge_free_models
             name: Free-Modelle
             icon: mdi:gift-outline
           - type: custom:mushroom-entity-card
-            entity: binary_sensor.go_gauge_api_erreichbar
+            entity: binary_sensor.go_gauge_api_reachable
             name: API erreichbar
             icon: mdi:cloud-check-outline
