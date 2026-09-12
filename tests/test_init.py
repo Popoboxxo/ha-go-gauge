@@ -3,8 +3,9 @@
 
 Audit reference: P2-Point-11 (https://github.com/Popoboxxo/ha-go-gauge/docs/AUDIT-2026-09-04.md)
 - Tests for async_setup_entry: entry registration in hass.data, catalog-owner logic
-- Tests for async_migrate_entry: migration path v1/v2 -> v3 -> v4 -> v5 -> v6
-  (v6 = German->English entity-name migration)
+- Tests for async_migrate_entry: migration path v1/v2 -> v3 -> v4 -> v5 -> v6 -> v7
+  (v6 = German->English entity-name migration,
+   v7 = German->English entity_id slug migration)
 - Tests for async_unload_entry: cleanup, owner migration on unload
 
 Tests import the REAL __init__ module and verify behavior directly
@@ -19,6 +20,11 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+try:  # pytest prepends the tests dir to sys.path, so `import conftest` works
+    import conftest
+except ModuleNotFoundError:  # pragma: no cover - tests dir imported as package
+    from tests import conftest  # type: ignore[no-redef]
 
 BASE = Path(__file__).resolve().parent.parent / "custom_components" / "go_gauge"
 
@@ -60,6 +66,25 @@ coordinator = _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 init_module = _load("go_gauge.__init__", str(BASE / "__init__.py"))
 
 
+@pytest.fixture(autouse=True)
+def _stub_registry_migrations():
+    """Stub the entity-registry name/id migrations to a no-op success.
+
+    The migration *data* logic under test here is independent of the entity
+    registry, which the offline HA stubs cannot provide. Without this the v7
+    step would (correctly) report failure and refuse to advance the version
+    (see the m2 behavior); the restore-version-on-failure path is covered in
+    tests/test_entity_id_migration.py.
+    """
+    with patch.object(
+        init_module, "_async_migrate_entity_names", new_callable=AsyncMock
+    ), patch.object(
+        init_module, "_async_migrate_entity_ids",
+        new_callable=AsyncMock, return_value=True,
+    ):
+        yield
+
+
 class TestAsyncMigrateEntryLogic:
     """Tests for async_migrate_entry() version migration logic.
 
@@ -68,14 +93,15 @@ class TestAsyncMigrateEntryLogic:
     v3: Multi-token format
     v4: Single workspace
     v5: SHA-256 unique_id
-    v6: German->English entity-name migration (current)
+    v6: German->English entity-name migration
+    v7: German->English entity_id slug migration (current)
 
     Tests the real async_migrate_entry function from __init__.py.
     """
 
     @pytest.mark.asyncio
-    async def test_migrate_v1_to_v6_extracts_first_token(self):
-        """[AUDIT-P2-11] v1->v6 migration keeps first token from list."""
+    async def test_migrate_v1_to_v7_extracts_first_token(self):
+        """[AUDIT-P2-11] v1->v7 migration keeps first token from list."""
         # Create mock entry for v1
         entry = MagicMock()
         entry.version = 1
@@ -84,14 +110,14 @@ class TestAsyncMigrateEntryLogic:
 
         # Mock hass.config_entries
         hass = MagicMock()
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
 
         result = await init_module.async_migrate_entry(hass, entry)
 
         # Migration should succeed
         assert result is True
-        # Entry version should be updated to 6 (current)
-        assert entry.version == 6
+        # Entry version should be updated to 7 (current)
+        assert entry.version == 7
         # First token should be extracted
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
@@ -109,7 +135,7 @@ class TestAsyncMigrateEntryLogic:
         entry.options = {"scan_interval": 120}
 
         hass = MagicMock()
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
 
         result = await init_module.async_migrate_entry(hass, entry)
 
@@ -134,7 +160,7 @@ class TestAsyncMigrateEntryLogic:
         entry.options = {}
 
         hass = MagicMock()
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
 
         result = await init_module.async_migrate_entry(hass, entry)
 
@@ -147,8 +173,8 @@ class TestAsyncMigrateEntryLogic:
         assert "tokens" not in updated_data
 
     @pytest.mark.asyncio
-    async def test_migrate_v4_to_v6_preserves_data(self):
-        """[AUDIT-P2-11] v4->v6 migration advances version but preserves data."""
+    async def test_migrate_v4_to_v7_preserves_data(self):
+        """[AUDIT-P2-11] v4->v7 migration advances version but preserves data."""
         original_data = {"token": "current-token", "workspace_name": "My WS"}
         entry = MagicMock()
         entry.version = 4
@@ -156,13 +182,13 @@ class TestAsyncMigrateEntryLogic:
         entry.options = {}
 
         hass = MagicMock()
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
 
         result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        # Version advances to current (6); entry.data is untouched.
-        assert entry.version == 6
+        # Version advances to current (7); entry.data is untouched.
+        assert entry.version == 7
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
         updated_data = call_args[1]["data"]
@@ -170,9 +196,9 @@ class TestAsyncMigrateEntryLogic:
 
     @pytest.mark.asyncio
     async def test_migrate_future_version_rejected(self):
-        """[AUDIT-P2-11] Versions > 6 are rejected (cannot downgrade)."""
+        """[AUDIT-P2-11] Versions > 7 are rejected (cannot downgrade)."""
         entry = MagicMock()
-        entry.version = 7
+        entry.version = 8
         entry.data = {}
         entry.options = {}
 
@@ -192,7 +218,7 @@ class TestAsyncMigrateEntryLogic:
         entry.options = {}
 
         hass = MagicMock()
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
 
         result = await init_module.async_migrate_entry(hass, entry)
 
@@ -205,13 +231,13 @@ class TestAsyncMigrateEntryLogic:
 
 
 class TestUniqueIdHashMigration:
-    """v4->v6 (incl. the v5 step): unique_id plaintext-fragment -> SHA-256 hash.
+    """v4->v7 (incl. the v5 step): unique_id plaintext-fragment -> SHA-256 hash.
 
     Security migration (AUDIT-2026-09-04): the pre-v5 unique_id embedded a
     16-char plaintext token fragment persisted in HA storage. The v5 step
     replaces it with a SHA-256 hash recomputed from the stored token, matching
     exactly what const.token_unique_id (and thus the config flow) produces. A
-    v4 entry therefore ends up at the current target version 6.
+    v4 entry therefore ends up at the current target version 7.
     """
 
     @staticmethod
@@ -220,8 +246,8 @@ class TestUniqueIdHashMigration:
         return f"go_gauge_{hashlib.sha256(token.encode()).hexdigest()[:16]}"
 
     @pytest.mark.asyncio
-    async def test_v4_to_v6_hashes_unique_id(self):
-        """[AUDIT-P2-11] v4->v6 replaces the plaintext-fragment id with the hash."""
+    async def test_v4_to_v7_hashes_unique_id(self):
+        """[AUDIT-P2-11] v4->v7 replaces the plaintext-fragment id with the hash."""
         token = "MyWorkspaceToken-abcdef123456"
         entry = MagicMock()
         entry.version = 4
@@ -231,12 +257,12 @@ class TestUniqueIdHashMigration:
         entry.options = {}
 
         hass = MagicMock()
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
 
         result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        assert entry.version == 6
+        assert entry.version == 7
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
         # (a) new unique_id equals the exact SHA-256 result
@@ -248,7 +274,7 @@ class TestUniqueIdHashMigration:
 
     @pytest.mark.asyncio
     async def test_v5_entry_migration_is_idempotent(self):
-        """[AUDIT-P2-11] An already-hashed v5 entry keeps its id and reaches v6."""
+        """[AUDIT-P2-11] An already-hashed v5 entry keeps its id and reaches v7."""
         token = "StableToken-0987654321"
         hashed = self._expected(token)
         entry = MagicMock()
@@ -258,19 +284,19 @@ class TestUniqueIdHashMigration:
         entry.options = {}
 
         hass = MagicMock()
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
 
         result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        assert entry.version == 6
+        assert entry.version == 7
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
         # unique_id stays the already-hashed value (no re-hash, no corruption)
         assert call_args[1]["unique_id"] == hashed
 
     @pytest.mark.asyncio
-    async def test_v4_to_v6_missing_token_keeps_unique_id(self):
+    async def test_v4_to_v7_missing_token_keeps_unique_id(self):
         """[AUDIT-P2-11] Edge case: no token -> unique_id untouched, no raise."""
         old_uid = "go_gauge_legacyplaintext"
         entry = MagicMock()
@@ -280,12 +306,12 @@ class TestUniqueIdHashMigration:
         entry.options = {}
 
         hass = MagicMock()
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
 
         result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        assert entry.version == 6
+        assert entry.version == 7
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
         # Defensive: without a token the old unique_id is left as-is.
@@ -308,7 +334,7 @@ class TestAsyncSetupEntryLogic:
 
         hass = MagicMock()
         hass.data = {}
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
         hass.config_entries.async_forward_entry_setups = AsyncMock()
 
         # Mock the coordinator to avoid complex initialization
@@ -338,7 +364,7 @@ class TestAsyncSetupEntryLogic:
                 "_catalog_owner": "entry_1",
             }
         }
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
         hass.config_entries.async_forward_entry_setups = AsyncMock()
 
         with patch.object(
@@ -360,7 +386,7 @@ class TestAsyncSetupEntryLogic:
 
         hass = MagicMock()
         hass.data = {}
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
         hass.config_entries.async_forward_entry_setups = AsyncMock()
 
         with patch.object(
@@ -395,7 +421,7 @@ class TestAsyncUnloadEntryLogic:
                 "entry_keep": MagicMock(),
             }
         }
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
         hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
 
         result = await init_module.async_unload_entry(hass, entry)
@@ -417,7 +443,7 @@ class TestAsyncUnloadEntryLogic:
                 "_catalog_owner": "entry_owner",
             }
         }
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
         hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
 
         result = await init_module.async_unload_entry(hass, entry)
@@ -447,7 +473,7 @@ class TestAsyncUnloadEntryLogic:
                 "_catalog_owner": entry1_id,
             }
         }
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
         hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
 
         result = await init_module.async_unload_entry(hass, entry)
@@ -470,7 +496,7 @@ class TestAsyncUnloadEntryLogic:
                 "metadata": "should_stay",
             }
         }
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
         hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
 
         result = await init_module.async_unload_entry(hass, entry)

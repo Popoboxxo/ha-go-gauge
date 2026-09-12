@@ -34,5 +34,38 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "usage": { "name": "{window} Usage" },
+      "reset": { "name": "{window} Reset" },
+      "forecast": { "name": "{window} Forecast" },
+      "pace": { "name": "{window} Pace" },
+      "remaining": { "name": "{window} Remaining" },
+      "time_to_reset": { "name": "{window} Time to Reset" },
+      "burn_rate": { "name": "{window} Burn-Rate" },
+      "model_catalog": { "name": "Models" },
+      "live_models_count": { "name": "Live Models" },
+      "cheapest_model": { "name": "Cheapest Model" },
+      "free_models": { "name": "Free Models" }
+    },
+    "binary_sensor": {
+      "rate_limited": { "name": "{window} rate-limited" },
+      "subscription_active": { "name": "Subscription Active" },
+      "api_reachable": { "name": "API Reachable" }
+    },
+    "number": {
+      "warning_threshold": { "name": "Warning Threshold" },
+      "pace_red_limit": { "name": "Pace Red Limit" },
+      "usage_refresh_min": { "name": "Usage Refresh (min)" },
+      "models_refresh_min": { "name": "Models Refresh (min)" }
+    },
+    "switch": {
+      "auto_update_usage": { "name": "Auto Update Usage" },
+      "auto_update_models": { "name": "Auto Update Models" }
+    },
+    "button": {
+      "refresh": { "name": "Refresh" }
+    }
   }
 }

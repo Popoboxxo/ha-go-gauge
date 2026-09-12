@@ -56,7 +56,7 @@ async def _probe_token(hass: HomeAssistant, token: str) -> tuple[bool, str | Non
 class GoGaugeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Ein Workspace = eine Instanz: Name + Token."""
 
-    VERSION = 6
+    VERSION = 7
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         errors: dict[str, str] = {}

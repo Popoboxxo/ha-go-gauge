@@ -251,16 +251,17 @@ class TestUniqueIdBehavior:
 class TestConfigFlowVersion:
     """Tests for config flow version constant."""
 
-    def test_config_flow_version_is_six(self):
-        """[AUDIT-P2-11] Config flow VERSION should be 6 (current migration target).
+    def test_config_flow_version_is_seven(self):
+        """[AUDIT-P2-11] Config flow VERSION should be 7 (current migration target).
 
-        Bumped from 4 to 5 for the SHA-256 unique_id migration and from 5 to 6
-        for the German->English entity-name migration.
+        Bumped from 4 to 5 for the SHA-256 unique_id migration, from 5 to 6 for
+        the German->English entity-name migration and from 6 to 7 for the
+        German->English entity_id slug migration.
         Verifies the constant in GoGaugeConfigFlow class.
         """
         # Import the real VERSION from the module
         assert hasattr(config_flow.GoGaugeConfigFlow, "VERSION")
-        assert config_flow.GoGaugeConfigFlow.VERSION == 6
+        assert config_flow.GoGaugeConfigFlow.VERSION == 7
 
 
 if __name__ == "__main__":

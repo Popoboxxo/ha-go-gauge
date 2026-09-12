@@ -8,14 +8,14 @@ Covers the interface contract implemented by the developer:
 - ``__init__._entity_name_migration_callback`` (registry-entry callback)
 - ``__init__._async_migrate_entity_names`` (awaits
   ``homeassistant.helpers.entity_registry.async_migrate_entries`` defensively)
-- ``async_migrate_entry`` targeting ConfigEntry version 6
+- ``async_migrate_entry`` targeting ConfigEntry version 7 (v6 name + v7 id steps)
 
 These are offline unit tests: the ``homeassistant.*`` fakes (including
 ``homeassistant.helpers.entity_registry``, which ``__init__`` imports
 function-locally) are installed centrally in ``tests/conftest.py``.
 
-TDD note: at the time of writing the migration itself does not exist yet, so
-every test in this file is expected to be RED. Nothing here may be satisfied by
+Implementation status: the migration described above is implemented and every
+test in this file is green against it. Nothing here may be satisfied by
 production code outside the contract above.
 """
 from __future__ import annotations
@@ -259,11 +259,11 @@ class TestAsyncMigrateEntityNames:
 
 
 class TestAsyncMigrateEntryTargetVersion:
-    """[REQ-MIG] async_migrate_entry() targets version 6."""
+    """[REQ-MIG] async_migrate_entry() targets version 7."""
 
     @pytest.mark.asyncio
-    async def test_v5_entry_runs_entity_migration_and_bumps_to_6(self):
-        """[REQ-MIG] v5 -> v6 runs the registry migration and advances the version."""
+    async def test_v5_entry_runs_entity_migration_and_bumps_to_7(self):
+        """[REQ-MIG] v5 -> v7 runs both registry migrations and advances the version."""
         entry = MagicMock()
         entry.version = 5
         entry.unique_id = "go_gauge_deadbeefdeadbeef"
@@ -271,20 +271,23 @@ class TestAsyncMigrateEntryTargetVersion:
         entry.options = {}
 
         hass = MagicMock()
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
 
         with patch.object(
             init_module, "_async_migrate_entity_names", new_callable=AsyncMock
-        ) as migrate_names:
+        ) as migrate_names, patch.object(
+            init_module, "_async_migrate_entity_ids", new_callable=AsyncMock
+        ) as migrate_ids:
             result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        assert entry.version == 6
+        assert entry.version == 7
         migrate_names.assert_awaited_once_with(hass, entry)
+        migrate_ids.assert_awaited_once_with(hass, entry)
 
     @pytest.mark.asyncio
     async def test_v4_entry_runs_older_steps_and_entity_migration_in_one_call(self):
-        """[REQ-MIG] v4 runs the older data steps AND the entity migration, then 6."""
+        """[REQ-MIG] v4 runs the older data steps AND the entity migration, then 7."""
         original_data = {"token": "tok-456", "workspace_name": "My WS"}
         entry = MagicMock()
         entry.version = 4
@@ -293,23 +296,25 @@ class TestAsyncMigrateEntryTargetVersion:
         entry.options = {}
 
         hass = MagicMock()
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
 
         with patch.object(
             init_module, "_async_migrate_entity_names", new_callable=AsyncMock
-        ) as migrate_names:
+        ) as migrate_names, patch.object(
+            init_module, "_async_migrate_entity_ids", new_callable=AsyncMock
+        ):
             result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        assert entry.version == 6
+        assert entry.version == 7
         migrate_names.assert_awaited_once_with(hass, entry)
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
         assert call_args[1]["data"] == original_data
 
     @pytest.mark.asyncio
-    async def test_v6_entry_is_idempotent(self):
-        """[REQ-MIG] An entry already at v6 returns True without re-migrating."""
+    async def test_v6_entry_runs_entity_id_migration_and_bumps_to_7(self):
+        """[REQ-MIG] A v6 entry runs only the v7 entity_id migration, then advances."""
         entry = MagicMock()
         entry.version = 6
         entry.unique_id = "go_gauge_deadbeefdeadbeef"
@@ -317,22 +322,26 @@ class TestAsyncMigrateEntryTargetVersion:
         entry.options = {}
 
         hass = MagicMock()
-        hass.config_entries = MagicMock()
+        conftest.install_applying_config_entries(hass)
 
         with patch.object(
             init_module, "_async_migrate_entity_names", new_callable=AsyncMock
-        ) as migrate_names:
+        ) as migrate_names, patch.object(
+            init_module, "_async_migrate_entity_ids", new_callable=AsyncMock
+        ) as migrate_ids:
             result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        assert entry.version == 6
+        assert entry.version == 7
+        # v6 body must not re-run for an entry already at v6.
         migrate_names.assert_not_awaited()
+        migrate_ids.assert_awaited_once_with(hass, entry)
 
     @pytest.mark.asyncio
-    async def test_future_version_7_is_rejected(self):
-        """[REQ-MIG] ConfigEntry versions > 6 are rejected (no downgrade)."""
+    async def test_future_version_8_is_rejected(self):
+        """[REQ-MIG] ConfigEntry versions > 7 are rejected (no downgrade)."""
         entry = MagicMock()
-        entry.version = 7
+        entry.version = 8
         entry.data = {}
         entry.options = {}
 

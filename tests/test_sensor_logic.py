@@ -239,7 +239,7 @@ class TestUsagePercentSensor:
         })
         entry = _FakeEntry()
         pct = sensor.UsagePercentSensor(
-            coordinator, entry, key="ws1", win="month", label="Monthly", ws_name="1"
+            coordinator, entry, key="ws1", win="month", label="Monthly"
         )
         pct.coordinator = coordinator
 
@@ -265,7 +265,7 @@ class TestUsagePercentSensor:
         })
         entry = _FakeEntry()
         pct = sensor.UsagePercentSensor(
-            coordinator, entry, key="ws2", win="month", label="Monthly", ws_name="2"
+            coordinator, entry, key="ws2", win="month", label="Monthly"
         )
         pct.coordinator = coordinator
 
@@ -289,7 +289,7 @@ class TestUsagePercentSensor:
         })
         entry = _FakeEntry()
         pct = sensor.UsagePercentSensor(
-            coordinator, entry, key="ws3", win="month", label="Monthly", ws_name="3"
+            coordinator, entry, key="ws3", win="month", label="Monthly"
         )
         pct.coordinator = coordinator
 
@@ -313,7 +313,7 @@ class TestUsagePercentSensor:
         })
         entry = _FakeEntry()
         pct = sensor.UsagePercentSensor(
-            coordinator, entry, key="ws1", win="week", label="Weekly", ws_name="1"
+            coordinator, entry, key="ws1", win="week", label="Weekly"
         )
         pct.coordinator = coordinator
 
@@ -338,7 +338,7 @@ class TestUsagePercentSensor:
         })
         entry = _FakeEntry()
         pct = sensor.UsagePercentSensor(
-            coordinator, entry, key="ws1", win="month", label="Monthly", ws_name="1"
+            coordinator, entry, key="ws1", win="month", label="Monthly"
         )
         pct.coordinator = coordinator
 
@@ -365,7 +365,7 @@ class TestUsagePercentSensor:
         })
         entry = _FakeEntry()
         pct = sensor.UsagePercentSensor(
-            coordinator, entry, key="ws1", win="5h", label="5-Hour", ws_name="1"
+            coordinator, entry, key="ws1", win="5h", label="5-Hour"
         )
         pct.coordinator = coordinator
 
@@ -392,7 +392,7 @@ class TestResetTimestampSensor:
         })
         entry = _FakeEntry()
         rst = sensor.ResetTimestampSensor(
-            coordinator, entry, key="ws1", win="week", label="Weekly", ws_name="1"
+            coordinator, entry, key="ws1", win="week", label="Weekly"
         )
         rst.coordinator = coordinator
 
@@ -414,7 +414,7 @@ class TestResetTimestampSensor:
         })
         entry = _FakeEntry()
         rst = sensor.ResetTimestampSensor(
-            coordinator, entry, key="ws1", win="5h", label="5-Hour", ws_name="1"
+            coordinator, entry, key="ws1", win="5h", label="5-Hour"
         )
         rst.coordinator = coordinator
 
@@ -437,7 +437,7 @@ class TestResetTimestampSensor:
         })
         entry = _FakeEntry()
         rst = sensor.ResetTimestampSensor(
-            coordinator, entry, key="ws1", win="month", label="Monthly", ws_name="1"
+            coordinator, entry, key="ws1", win="month", label="Monthly"
         )
         rst.coordinator = coordinator
 

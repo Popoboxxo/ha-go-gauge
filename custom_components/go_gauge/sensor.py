@@ -23,14 +23,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     DOMAIN,
-    ENTITY_NAME_CHEAPEST_MODEL,
-    ENTITY_NAME_FORECAST,
-    ENTITY_NAME_FREE_MODELS,
-    ENTITY_NAME_LIVE_MODELS,
-    ENTITY_NAME_MODELS,
-    ENTITY_NAME_REMAINING,
-    ENTITY_NAME_TIME_TO_RESET,
-    ENTITY_NAME_USAGE,
     WINDOW_LABELS,
 )
 from .coordinator import (
@@ -60,26 +52,24 @@ async def async_setup_entry(
     coordinator: GoGaugeCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[SensorEntity] = []
 
-    ws_name = getattr(coordinator, "ws_name", "") or "WS 1"
-
     for ws in coordinator.data.get("workspaces", []):
         key = ws["key"]
         for win in ("5h", "week", "month"):
             label = WINDOW_LABELS.get(win, win)
             entities.append(UsagePercentSensor(
-                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
+                coordinator, entry, key=key, win=win, label=label))
             entities.append(ResetTimestampSensor(
-                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
+                coordinator, entry, key=key, win=win, label=label))
             entities.append(UsageForecastSensor(
-                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
+                coordinator, entry, key=key, win=win, label=label))
             entities.append(UsagePaceSensor(
-                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
+                coordinator, entry, key=key, win=win, label=label))
             entities.append(RemainingBudgetSensor(
-                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
+                coordinator, entry, key=key, win=win, label=label))
             entities.append(TimeUntilResetSensor(
-                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
+                coordinator, entry, key=key, win=win, label=label))
             entities.append(BurnRateSensor(
-                coordinator, entry, key=key, win=win, label=label, ws_name=ws_name))
+                coordinator, entry, key=key, win=win, label=label))
 
     if getattr(coordinator, "is_catalog_owner", True):
         # Modell-Katalog: EIN Sensor mit JSON-Attributen (dynamisch)
@@ -91,8 +81,9 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-def _display_name(name: str) -> str:
-    return name or "WS 1"
+def _window_placeholders(label: str) -> dict[str, str]:
+    """Translation placeholders for the per-window sensors (``{window}``)."""
+    return {"window": label}
 
 
 class UsagePercentSensor(GoGaugeEntityBase, SensorEntity):
@@ -110,14 +101,15 @@ class UsagePercentSensor(GoGaugeEntityBase, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "%"
     _attr_icon = "mdi:speedometer"
+    _attr_translation_key = "usage"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
-                 key: str, win: str, label: str, ws_name: str) -> None:
+                 key: str, win: str, label: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_percent"
-        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} {ENTITY_NAME_USAGE}"
+        self._attr_translation_placeholders = _window_placeholders(label)
 
     def _status(self) -> str | None:
         ws = self._ws(self._key)
@@ -162,14 +154,15 @@ class ResetTimestampSensor(GoGaugeEntityBase, SensorEntity):
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:timer-reset"
+    _attr_translation_key = "reset"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
-                 key: str, win: str, label: str, ws_name: str) -> None:
+                 key: str, win: str, label: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_reset"
-        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Reset"
+        self._attr_translation_placeholders = _window_placeholders(label)
 
     @property
     def native_value(self) -> datetime | None:
@@ -195,14 +188,15 @@ class UsageForecastSensor(GoGaugeEntityBase, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "%"
     _attr_icon = "mdi:trending-up"
+    _attr_translation_key = "forecast"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
-                 key: str, win: str, label: str, ws_name: str) -> None:
+                 key: str, win: str, label: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_forecast"
-        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} {ENTITY_NAME_FORECAST}"
+        self._attr_translation_placeholders = _window_placeholders(label)
 
     @property
     def native_value(self) -> float | None:
@@ -217,14 +211,15 @@ class UsagePaceSensor(GoGaugeEntityBase, SensorEntity):
     """
 
     _attr_icon = "mdi:speedometer-medium"
+    _attr_translation_key = "pace"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
-                 key: str, win: str, label: str, ws_name: str) -> None:
+                 key: str, win: str, label: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_pace"
-        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Pace"
+        self._attr_translation_placeholders = _window_placeholders(label)
 
     @property
     def native_value(self) -> str | None:
@@ -257,14 +252,15 @@ class RemainingBudgetSensor(GoGaugeEntityBase, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "%"
     _attr_icon = "mdi:gauge"
+    _attr_translation_key = "remaining"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
-                 key: str, win: str, label: str, ws_name: str) -> None:
+                 key: str, win: str, label: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_remaining"
-        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} {ENTITY_NAME_REMAINING}"
+        self._attr_translation_placeholders = _window_placeholders(label)
 
     @property
     def native_value(self) -> float | None:
@@ -277,14 +273,15 @@ class TimeUntilResetSensor(GoGaugeEntityBase, SensorEntity):
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_native_unit_of_measurement = "h"
     _attr_icon = "mdi:timer-sand"
+    _attr_translation_key = "time_to_reset"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
-                 key: str, win: str, label: str, ws_name: str) -> None:
+                 key: str, win: str, label: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_time_to_reset"
-        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} {ENTITY_NAME_TIME_TO_RESET}"
+        self._attr_translation_placeholders = _window_placeholders(label)
 
     @property
     def native_value(self) -> float | None:
@@ -298,14 +295,15 @@ class BurnRateSensor(GoGaugeEntityBase, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "%/h"
     _attr_icon = "mdi:fire"
+    _attr_translation_key = "burn_rate"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
-                 key: str, win: str, label: str, ws_name: str) -> None:
+                 key: str, win: str, label: str) -> None:
         super().__init__(coordinator, entry)
         self._key = key
         self._win = win
         self._attr_unique_id = f"{entry.entry_id}_{key}_{win}_burn_rate"
-        self._attr_name = f"Go Gauge {_display_name(ws_name)} {label} Burn-Rate"
+        self._attr_translation_placeholders = _window_placeholders(label)
 
     @property
     def native_value(self) -> float | None:
@@ -326,11 +324,11 @@ class ModelCatalogSensor(GoGaugeAccountEntityBase, SensorEntity):
 
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:format-list-bulleted"
+    _attr_translation_key = "model_catalog"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_model_catalog"
-        self._attr_name = f"Go Gauge {ENTITY_NAME_MODELS}"
         # Cache fuer extra_state_attributes, invalidiert ueber
         # "models_updated_at" (aendert sich nur bei echtem Modell-Refresh,
         # nicht bei jedem Coordinator-Poll) - vermeidet dict-Copy +
@@ -390,11 +388,11 @@ class LiveModelsCountSensor(GoGaugeAccountEntityBase, SensorEntity):
 
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:check-network-outline"
+    _attr_translation_key = "live_models_count"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_models_live_count"
-        self._attr_name = f"Go Gauge {ENTITY_NAME_LIVE_MODELS}"
 
     @property
     def native_value(self) -> int | None:
@@ -406,11 +404,11 @@ class CheapestModelSensor(GoGaugeAccountEntityBase, SensorEntity):
     """Guenstigstes bezahltes Modell nach gemischtem $/1M."""
 
     _attr_icon = "mdi:crown-outline"
+    _attr_translation_key = "cheapest_model"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_cheapest_model"
-        self._attr_name = f"Go Gauge {ENTITY_NAME_CHEAPEST_MODEL}"
 
     @property
     def native_value(self) -> str | None:
@@ -427,11 +425,11 @@ class CheapestModelSensor(GoGaugeAccountEntityBase, SensorEntity):
 
 class FreeModelsSensor(GoGaugeAccountEntityBase, SensorEntity):
     _attr_icon = "mdi:gift-outline"
+    _attr_translation_key = "free_models"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_free_models"
-        self._attr_name = f"Go Gauge {ENTITY_NAME_FREE_MODELS}"
 
     @property
     def native_value(self) -> str | None:

@@ -34,5 +34,38 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "usage": { "name": "{window} Nutzung" },
+      "reset": { "name": "{window} Reset" },
+      "forecast": { "name": "{window} Prognose" },
+      "pace": { "name": "{window} Pace" },
+      "remaining": { "name": "{window} Restbudget" },
+      "time_to_reset": { "name": "{window} Restzeit" },
+      "burn_rate": { "name": "{window} Burn-Rate" },
+      "model_catalog": { "name": "Modelle" },
+      "live_models_count": { "name": "Live-Modelle" },
+      "cheapest_model": { "name": "Günstigstes Modell" },
+      "free_models": { "name": "Free-Modelle" }
+    },
+    "binary_sensor": {
+      "rate_limited": { "name": "{window} rate-limitiert" },
+      "subscription_active": { "name": "Abo aktiv" },
+      "api_reachable": { "name": "API erreichbar" }
+    },
+    "number": {
+      "warning_threshold": { "name": "Warnschwelle" },
+      "pace_red_limit": { "name": "Ampel Rot-Grenze" },
+      "usage_refresh_min": { "name": "Nutzung Refresh (Minuten)" },
+      "models_refresh_min": { "name": "Modelle Refresh (Minuten)" }
+    },
+    "switch": {
+      "auto_update_usage": { "name": "Nutzung Auto-Update" },
+      "auto_update_models": { "name": "Modelle Auto-Update" }
+    },
+    "button": {
+      "refresh": { "name": "Aktualisieren" }
+    }
   }
 }
