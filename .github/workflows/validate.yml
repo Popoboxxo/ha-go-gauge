@@ -37,7 +37,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install test dependencies
-        run: pip install "pytest>=9,<10" "voluptuous>=0.14,<1"
+        run: pip install "pytest>=9,<10" "pytest-asyncio>=1,<2" "voluptuous>=0.14,<1"
       # Tests use the repo's own Home Assistant stubs (tests/conftest.py),
       # so no real homeassistant package is required.
       - name: Run tests
