@@ -60,3 +60,5 @@ sync.log
 # Local tooling artifacts
 .serena/
 sync-upgrade.log
+.ruff_cache/
+.mypy_cache/

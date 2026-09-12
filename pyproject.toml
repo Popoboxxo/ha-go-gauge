@@ -1,0 +1,45 @@
+# Dev/CI tooling configuration for ha-go-gauge.
+#
+# This repo ships no build system (pure Home Assistant custom integration), so
+# this file exists solely to make `ruff check .` and `mypy` behave identically
+# on a developer machine and in CI. It has no runtime effect.
+
+[tool.ruff]
+line-length = 100
+# Align with the minimum supported runtime (hacs.json `homeassistant` =
+# "2024.6.0", Python 3.12) so lint does not flag/miss 3.13-only constructs.
+target-version = "py312"
+# `.agent-meta` is a git submodule with its own lifecycle (see AGENTS.md,
+# "Submodule-Schutzkonzept") and must never be linted or edited from here.
+extend-exclude = [".agent-meta"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests carry long descriptive docstrings, fixture payloads and assertion
+# lines whose wrapping would hurt readability - relax E501 for them only.
+"tests/*" = ["E501"]
+# const.py holds the static PRICING table with one model per line (kept
+# diff-friendly and in sync with the upstream pricing page); those long lines
+# are data, not logic, and wrap poorly - relax E501 for this module only.
+"custom_components/go_gauge/const.py" = ["E501"]
+
+[tool.mypy]
+# Align with the minimum supported runtime (hacs.json `homeassistant` =
+# "2024.6.0", Python 3.12).
+python_version = "3.12"
+# Check the integration only - tests rely on deliberately loose HA fakes.
+files = ["custom_components/go_gauge"]
+# homeassistant is intentionally NOT installed in CI; the integration is
+# type-checked against the objects it actually uses via local annotations.
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["homeassistant", "homeassistant.*"]
+# In CI homeassistant is absent and resolves to ``Any`` via
+# ignore_missing_imports. A dev machine may have a newer HA installed whose
+# sources already use Python 3.13-only syntax (PEP 696 type-parameter defaults),
+# which mypy cannot parse under the py3.12 minimum runtime. Skip following HA
+# there too so local runs match CI exactly and stay on the 3.12 target.
+follow_imports = "skip"
