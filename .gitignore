@@ -21,12 +21,14 @@ Thumbs.db
 !.env.example
 
 # --- agent-meta managed (do not edit) ---
+.agents/hooks/
 .claude/agent-memory-local/
 .claude/agents/
 .claude/commands/
 .claude/hooks/
 .claude/pending-tasks.md
 .claude/pipeline-details/
+.claude/progress/
 .claude/rules/
 .claude/settings.local.json
 .claude/skills/
