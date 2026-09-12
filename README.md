@@ -86,6 +86,12 @@ nur mit Home-Assistant-Bordmitteln (keine Zusatzintegration nötig) und eine
 kompakte **Mushroom**-Variante (Frontend-Ressource via HACS). Beide zeigen
 Nutzung, Pace, Forecast, Remaining/Time to Reset, Steuerung und Model Catalog.
 
+Ergänzend gibt es eine **Matrix**-Variante
+([`workspace-matrix.yaml`](docs/dashboards/workspace-matrix.yaml)), die mehrere
+Workspaces nebeneinander im responsiven Grid anordnet und dafür die
+HACS-Ressourcen decluttering-card, layout-card, Mushroom und
+vertical-stack-in-card benötigt.
+
 ## Entitäten (Beispiel: Workspace „Team")
 
 Die Entity-Namen enthalten den beim Einrichten vergebenen Workspace-Namen — die
