@@ -539,7 +539,7 @@ def test_burn_rate_sensor_defaults_to_empty_samples():
     })
     entry = _FakeEntry()
     entity = sensor.BurnRateSensor(
-        coordinator, entry, key="ws1", win="5h", label="5-Hour", ws_name="Work"
+        coordinator, entry, key="ws1", win="5h", label="5-Hour"
     )
     entity.coordinator = coordinator
     assert entity.native_value is None

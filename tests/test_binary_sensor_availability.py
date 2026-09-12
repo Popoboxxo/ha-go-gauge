@@ -102,7 +102,7 @@ def _make_sensor(status: str, last_update_success: bool) -> "binary_sensor.RateL
     }
     coordinator = _FakeCoordinator(data, last_update_success=last_update_success)
     return binary_sensor.RateLimitedBinarySensor(
-        coordinator, _FakeEntry(), key="ws1", win="month", ws_name="Work")
+        coordinator, _FakeEntry(), key="ws1", win="month")
 
 
 def test_available_when_update_succeeds_and_subscription_active():

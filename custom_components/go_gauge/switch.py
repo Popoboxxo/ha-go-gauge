@@ -32,12 +32,11 @@ class AutoUpdateUsageSwitch(GoGaugeEntityBase, SwitchEntity):
     """Auto-Refresh fuer Nutzungsdaten ein/aus."""
 
     _attr_icon = "mdi:autorenew"
+    _attr_translation_key = "auto_update_usage"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        ws = getattr(coordinator, "ws_name", "") or "WS 1"
         self._attr_unique_id = f"{entry.entry_id}_auto_update_usage"
-        self._attr_name = f"Go Gauge {ws} Nutzung Auto-Update"
 
     @property
     def is_on(self) -> bool | None:
@@ -60,12 +59,11 @@ class AutoUpdateModelsSwitch(GoGaugeEntityBase, SwitchEntity):
     """Auto-Refresh fuer Modell-Katalog ein/aus."""
 
     _attr_icon = "mdi:autorenew"
+    _attr_translation_key = "auto_update_models"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        ws = getattr(coordinator, "ws_name", "") or "WS 1"
         self._attr_unique_id = f"{entry.entry_id}_auto_update_models"
-        self._attr_name = f"Go Gauge {ws} Modelle Auto-Update"
 
     @property
     def is_on(self) -> bool | None:

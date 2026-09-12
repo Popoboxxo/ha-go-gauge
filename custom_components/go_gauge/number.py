@@ -9,9 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    DEFAULT_MODELS_REFRESH_MINUTES,
     DEFAULT_PACE_RED_PERCENT,
-    DEFAULT_USAGE_REFRESH_MINUTES,
     DEFAULT_WARN_PERCENT,
     DOMAIN,
 )
@@ -19,11 +17,6 @@ from .coordinator import GoGaugeCoordinator
 from .entity import GoGaugeEntityBase, persist_options
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _with_ws(coordinator: GoGaugeCoordinator, base: str) -> str:
-    ws = getattr(coordinator, "ws_name", "") or "WS 1"
-    return f"{base} · {ws}" if ws else base
 
 
 async def async_setup_entry(
@@ -41,16 +34,19 @@ async def async_setup_entry(
 
 
 class _SettingNumber(GoGaugeEntityBase, NumberEntity):
-    """Basis fuer Zahlen-Einstellungen (Box-Modus, sofort wirksam)."""
+    """Basis fuer Zahlen-Einstellungen (Box-Modus, sofort wirksam).
+
+    Der Anzeigename kommt aus ``translation_key`` (Klassen-Attribut der
+    jeweiligen Unterklasse); HA stellt den Geraetenamen voran.
+    """
 
     _attr_mode = NumberMode.BOX
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
-                 unique_suffix: str, name: str,
+                 unique_suffix: str,
                  min_value: int, max_value: int) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_{unique_suffix}"
-        self._attr_name = name
         self._attr_native_min_value = min_value
         self._attr_native_max_value = max_value
         self._attr_native_step = 1
@@ -61,11 +57,11 @@ class WarnPercentNumber(_SettingNumber):
 
     _attr_icon = "mdi:alert-octagon-outline"
     _attr_native_unit_of_measurement = "%"
+    _attr_translation_key = "warning_threshold"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="warn_percent",
-                         name=f"{_with_ws(coordinator, 'Go Gauge Warnschwelle')}",
                          min_value=1, max_value=100)
 
     @property
@@ -83,11 +79,11 @@ class PaceRedPercentNumber(_SettingNumber):
 
     _attr_icon = "mdi:alert-decagram-outline"
     _attr_native_unit_of_measurement = "%"
+    _attr_translation_key = "pace_red_limit"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="pace_red_percent",
-                         name=f"{_with_ws(coordinator, 'Go Gauge Ampel Rot-Grenze')}",
                          min_value=1, max_value=300)
 
     @property
@@ -105,11 +101,11 @@ class UsageRefreshMinutesNumber(_SettingNumber):
 
     _attr_icon = "mdi:timer-outline"
     _attr_native_unit_of_measurement = "min"
+    _attr_translation_key = "usage_refresh_min"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="usage_refresh_minutes",
-                         name=f"{_with_ws(coordinator, 'Go Gauge Nutzung Refresh (Minuten)')}",
                          min_value=1, max_value=1440)
 
     @property
@@ -128,11 +124,11 @@ class ModelsRefreshMinutesNumber(_SettingNumber):
 
     _attr_icon = "mdi:timer-outline"
     _attr_native_unit_of_measurement = "min"
+    _attr_translation_key = "models_refresh_min"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry,
                          unique_suffix="models_refresh_minutes",
-                         name=f"{_with_ws(coordinator, 'Go Gauge Modelle Refresh (Minuten)')}",
                          min_value=1, max_value=1440)
 
     @property

@@ -15,7 +15,17 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class GoGaugeEntityBase(CoordinatorEntity):
-    """Common device-info wiring + entry reference for all Go Gauge entities."""
+    """Common device-info wiring + entry reference for all Go Gauge entities.
+
+    ``has_entity_name`` is enabled globally: entity display names are resolved
+    from ``translation_key`` lookups (strings.json / translations/*.json) and
+    HA prefixes the device name automatically (e.g. "Go Gauge <workspace>" for
+    workspace entities, "Go Gauge Konto" for workspace-independent ones). No
+    entity sets ``_attr_name`` anymore - a set ``_attr_name`` would short-circuit
+    the translation lookup.
+    """
+
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)

@@ -148,13 +148,13 @@ async def main():
     assert cat.native_value == len(catalog)
 
     pct = sensor.UsagePercentSensor(fc, types.SimpleNamespace(entry_id="test"),
-                                    key="ws3", win="month", label="Monat", ws_name="3")
+                                    key="ws3", win="month", label="Monat")
     pct.coordinator = fc
     print(f"UsagePercent ws3/month -> {pct.native_value}% "
           f"| reset_iso={pct.extra_state_attributes.get('resets_at_iso')}")
 
     rst = sensor.ResetTimestampSensor(fc, types.SimpleNamespace(entry_id="test"),
-                                      key="ws2", win="month", label="Monat", ws_name="2")
+                                      key="ws2", win="month", label="Monat")
     rst.coordinator = fc
     print(f"ResetTimestamp ws2/month -> {rst.native_value}")
 

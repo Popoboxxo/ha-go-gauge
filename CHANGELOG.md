@@ -1,5 +1,147 @@
 # Changelog
 
+## [Unreleased]
+
+> **SemVer note:** the next release is a **MAJOR** release. Renaming
+> entity IDs is a user-visible breaking change (per this project's rule that
+> entity/naming changes are always MAJOR). The version number itself is set by
+> the release process and is intentionally not assigned here.
+
+### Summary
+
+Breaking entity-ID release. Existing entities get their **`entity_id` slug
+renamed from German to English** through a Home Assistant Entity-Registry
+migration (config-entry schema version 5 → 7; the v7 step does the slug
+rename). Only the slug changes:
+`unique_id` is never touched, so the entity — including its device assignment,
+history and long-term statistics — stays the same. In the same change, entity
+display names move from hardcoded `_attr_name` values to
+`has_entity_name` + `translation_key` lookups (English master `strings.json`,
+German overlay `translations/de.json`).
+
+Because automations, scripts, dashboards, templates and any other YAML/UI
+reference entities by their `entity_id`, this release requires user action for
+setups that reference the affected Go Gauge entities by their old German slugs.
+
+### Changed
+
+- Entity display names are now resolved from `translation_key` translations:
+  `has_entity_name = True` on the shared base `GoGaugeEntityBase`, English
+  master `strings.json` and German overlay `translations/de.json`. No platform
+  class sets `_attr_name` anymore (it would short-circuit the translation
+  lookup); the device name (`Go Gauge <workspace>`) is prefixed by HA.
+- Config-entry schema `VERSION` bumps from 5 to 7. `async_migrate_entry()` runs
+  automatically on the next Home Assistant restart and is idempotent:
+  - **v6** rewrites legacy German `original_name` values to the canonical
+    English names.
+  - **v7** rewrites legacy German `entity_id` slugs to the mapped English
+    slugs via the Entity Registry (`new_entity_id`); `unique_id` stays stable.
+
+### Breaking Changes
+
+**Entity-ID slug migration German → English (automatic rename, manual follow-up in your configs)**
+
+- **What changed:** every entity that was registered under a legacy German
+  slug is renamed in the entity registry. A `sensor.go_gauge_team_monthly_nutzung`
+  becomes `sensor.go_gauge_team_monthly_usage`, and so on.
+- **What stays the same:** the entity itself. The migration leaves `unique_id`
+  untouched, so the entity keeps its device assignment, its history and its
+  long-term statistics — no new/duplicate entity is created and no history is
+  lost.
+- **What you must do:** update every reference to an **old** Go Gauge
+  `entity_id` in
+  - **automations** (triggers, conditions, actions),
+  - **scripts**,
+  - **dashboards / Lovelace cards** (and any UI entity pickers that stored the
+    old ID),
+  - **templates** (`states('sensor.…')`, `state_attr(...)`, template sensors),
+  - **helpers / groups / scenes / other integrations** that point at the entity.
+- **Automatic, not optional:** the rename runs on the next Home Assistant
+  restart. There is no separate manual migration step and no way to keep the old
+  slug through a config option.
+- **Already-English entities are unaffected:** `reset`, `pace`, `burn_rate` and
+  `rate_limited` were never German and are intentionally not part of the
+  mapping.
+
+Affected slug mapping (legacy German `entity_id` → new English `entity_id`):
+
+| Legacy (migrated from) | New (migrated to) |
+|---|---|
+| `sensor.go_gauge_<ws>_<window>_nutzung` | `sensor.go_gauge_<ws>_<window>_usage` |
+| `sensor.go_gauge_<ws>_<window>_prognose` | `sensor.go_gauge_<ws>_<window>_forecast` |
+| `sensor.go_gauge_<ws>_<window>_restbudget` | `sensor.go_gauge_<ws>_<window>_remaining` |
+| `sensor.go_gauge_<ws>_<window>_restzeit` | `sensor.go_gauge_<ws>_<window>_time_to_reset` |
+| `sensor.go_gauge_modelle` | `sensor.go_gauge_models` |
+| `sensor.go_gauge_live_modelle` | `sensor.go_gauge_live_models` |
+| `sensor.go_gauge_gunstigstes_modell` | `sensor.go_gauge_cheapest_model` |
+| `sensor.go_gauge_free_modelle` | `sensor.go_gauge_free_models` |
+| `binary_sensor.go_gauge_<ws>_abo_aktiv` | `binary_sensor.go_gauge_<ws>_subscription_active` |
+| `binary_sensor.go_gauge_api_erreichbar` | `binary_sensor.go_gauge_api_reachable` |
+| `button.go_gauge_aktualisieren` | `button.go_gauge_refresh` |
+| `number.go_gauge_warnschwelle_<ws>` | `number.go_gauge_warning_threshold_<ws>` |
+| `number.go_gauge_ampel_rot_grenze_<ws>` | `number.go_gauge_pace_red_limit_<ws>` |
+| `number.go_gauge_nutzung_refresh_minuten_<ws>` | `number.go_gauge_usage_refresh_min_<ws>` |
+| `number.go_gauge_modelle_refresh_minuten_<ws>` | `number.go_gauge_models_refresh_min_<ws>` |
+| `switch.go_gauge_<ws>_nutzung_auto_update` | `switch.go_gauge_<ws>_auto_update_usage` |
+| `switch.go_gauge_<ws>_modelle_auto_update` | `switch.go_gauge_<ws>_auto_update_models` |
+
+`<ws>` is the workspace slug derived from the configured workspace name and
+`<window>` is one of `5h_rolling`, `weekly` or `monthly`.
+
+### Migration target vs. fresh-install slug (important)
+
+The v7 migration target follows the explicit **legacy → English mapping** in the
+table above. It is a position-preserving phrase replacement of the legacy
+object_id: the workspace/device prefix and the position of the entity-specific
+token are kept, only the German phrase is translated
+(`number.go_gauge_warnschwelle_<ws>` → `number.go_gauge_warning_threshold_<ws>`,
+`switch.go_gauge_<ws>_nutzung_auto_update` → `switch.go_gauge_<ws>_auto_update_usage`).
+
+This means the migrated target is **not** always the slug Home Assistant would
+derive for a **fresh install**. A fresh `entity_id` is composed from the active
+translation's display name plus the device name, so for **10 entity classes** the
+two intentionally differ:
+
+| Entity | Migrated target (this release) | Fresh-install slug (English HA) |
+|---|---|---|
+| Model catalog | `sensor.go_gauge_models` | `sensor.go_gauge_konto_models` |
+| Live models | `sensor.go_gauge_live_models` | `sensor.go_gauge_konto_live_models` |
+| Cheapest model | `sensor.go_gauge_cheapest_model` | `sensor.go_gauge_konto_cheapest_model` |
+| Free models | `sensor.go_gauge_free_models` | `sensor.go_gauge_konto_free_models` |
+| API reachable | `binary_sensor.go_gauge_api_reachable` | `binary_sensor.go_gauge_konto_api_reachable` |
+| Refresh button | `button.go_gauge_refresh` | `button.go_gauge_<ws>_refresh` |
+| Warning threshold | `number.go_gauge_warning_threshold_<ws>` | `number.go_gauge_<ws>_warning_threshold` |
+| Pace red limit | `number.go_gauge_pace_red_limit_<ws>` | `number.go_gauge_<ws>_pace_red_limit` |
+| Usage refresh | `number.go_gauge_usage_refresh_min_<ws>` | `number.go_gauge_<ws>_usage_refresh_min` |
+| Models refresh | `number.go_gauge_models_refresh_min_<ws>` | `number.go_gauge_<ws>_models_refresh_min` |
+
+Reasons: the workspace-independent catalog/API entities live on the separate
+"Go Gauge Konto" device (fresh slug gets the `go_gauge_konto` device prefix),
+while `number`/`button` entities belong to a workspace device (a fresh slug puts
+the workspace name before the entity name). The remaining entities
+(`sensor.*` window sensors, `binary_sensor.*` subscription, `switch.*`) happen to
+match the fresh-install slug.
+
+**Upgraded install:** use the mapped targets from the table above — do **not**
+assume a fresh install's slug. **Fresh install:** its entity IDs are created new
+and are not part of this migration.
+
+Also note a fresh install derives its slug from the **active translation** (a
+German HA system yields German-derived slugs for the translated display names),
+whereas the migration always applies the fixed English mapping regardless of the
+HA system language.
+
+Collision handling is deliberately strict: if the mapped target `entity_id` is
+already occupied — in the entity registry **or** as a state — the rename for that
+entity is **skipped** and a warning is logged, so the migration never aborts and
+`unique_id` stays stable, at the cost of that one entity keeping its legacy
+slug. Check the HA log for
+`Go Gauge: entity_id … ist bereits belegt` after upgrading.
+
+### Full Changelog
+
+https://github.com/Popoboxxo/ha-go-gauge/compare/v1.4.0...HEAD
+
 ## [1.4.0] — 2026-09-10
 
 ### Summary

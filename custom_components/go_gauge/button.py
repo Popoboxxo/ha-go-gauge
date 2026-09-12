@@ -29,7 +29,7 @@ class RefreshButton(GoGaugeEntityBase, ButtonEntity):
     unabhaengig von den Auto-Update-Schaltern."""
 
     _attr_icon = "mdi:refresh"
-    _attr_name = "Go Gauge Aktualisieren"
+    _attr_translation_key = "refresh"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)

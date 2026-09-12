@@ -44,6 +44,8 @@ from __future__ import annotations
 
 import sys
 import types
+from typing import Any
+from unittest.mock import MagicMock
 
 
 class _Flexible(types.ModuleType):
@@ -85,7 +87,9 @@ class _Flexible(types.ModuleType):
 # audit / the generic skill baseline) so a future test file that touches
 # them doesn't hit a fresh ImportError: helpers.entity, helpers.storage,
 # helpers.service, helpers.config_validation, exceptions, const, util,
-# util.dt.
+# util.dt. helpers.entity_registry is imported (function-locally) by the
+# v6 entity-name migration in __init__.py - see
+# tests/test_entity_name_migration.py.
 _FAKE_HA_MODULES = [
     "homeassistant",
     "homeassistant.core",
@@ -97,6 +101,7 @@ _FAKE_HA_MODULES = [
     "homeassistant.helpers",
     "homeassistant.helpers.entity",
     "homeassistant.helpers.entity_platform",
+    "homeassistant.helpers.entity_registry",
     "homeassistant.helpers.update_coordinator",
     "homeassistant.helpers.aiohttp_client",
     "homeassistant.helpers.storage",
@@ -208,3 +213,95 @@ def install_ha_stubs() -> None:
 
 
 install_ha_stubs()
+
+
+# --- ConfigEntry test doubles (RC-3: real-instance fidelity) ----------------
+# Home Assistant >= 2026.9 forbids direct assignment of the attributes it
+# manages through ``ConfigEntries.async_update_entry`` (``version`` among them):
+# ``ConfigEntry.__setattr__`` raises
+# ``AttributeError: version cannot be changed directly, use async_update_entry
+# instead``. The permissive ``MagicMock`` entries used throughout the unit tests
+# silently accepted ``entry.version = 6`` and therefore could not catch that the
+# v7 migration crashed on the real instance. These doubles close that gap.
+_MANAGED_CONFIG_ENTRY_ATTRS = frozenset({
+    "version",
+    "unique_id",
+    "data",
+    "options",
+    "title",
+    "minor_version",
+    "discovery_keys",
+    "pref_disable_new_entities",
+    "pref_disable_polling",
+})
+
+
+class StrictConfigEntry:
+    """``ConfigEntry`` double mirroring the HA >=2026.9 attribute guard.
+
+    Direct assignment of any :data:`_MANAGED_CONFIG_ENTRY_ATTRS` (notably
+    ``version``) raises the same ``AttributeError`` as the real
+    ``ConfigEntry.__setattr__``. Only :func:`make_applying_config_entries` /
+    :func:`install_applying_config_entries` may write those values - via
+    ``object.__setattr__``, exactly like HA's internal ``_async_setter``. A
+    migration that still assigns ``entry.version = N`` therefore fails here,
+    while it passes against a permissive ``MagicMock``.
+    """
+
+    def __init__(
+        self,
+        *,
+        version: int = 1,
+        unique_id: str | None = None,
+        data: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
+        entry_id: str = "entry-abc",
+        title: str = "Go Gauge",
+    ) -> None:
+        object.__setattr__(self, "entry_id", entry_id)
+        object.__setattr__(self, "title", title)
+        object.__setattr__(self, "version", version)
+        object.__setattr__(self, "unique_id", unique_id)
+        object.__setattr__(self, "data", dict(data) if data is not None else {})
+        object.__setattr__(
+            self, "options", dict(options) if options is not None else {}
+        )
+
+    def __setattr__(self, key: str, value: Any) -> None:
+        """Reject direct writes to managed attrs, mirroring real HA."""
+        if key in _MANAGED_CONFIG_ENTRY_ATTRS:
+            raise AttributeError(
+                f"{key} cannot be changed directly, use async_update_entry instead"
+            )
+        object.__setattr__(self, key, value)
+
+
+def _apply_async_update_entry(entry: Any, **changes: Any) -> bool:
+    """Apply ``async_update_entry`` keyword changes like the real HA core."""
+    for key, value in changes.items():
+        # object.__setattr__ mirrors HA's internal _async_setter, which is the
+        # only path allowed to bypass ConfigEntry.__setattr__.
+        object.__setattr__(entry, key, value)
+    return True
+
+
+def make_applying_config_entries() -> MagicMock:
+    """Return a ``hass.config_entries`` mock that really applies updates.
+
+    ``async_update_entry`` stays a ``MagicMock`` (so ``.call_args`` /
+    ``assert_called_with`` keep working), but its ``side_effect`` writes each
+    keyword argument onto the passed entry via ``object.__setattr__`` - exactly
+    what real HA does. Without this, ``assert entry.version == 7`` would fail
+    after the fix because a plain MagicMock would swallow the update.
+    """
+    config_entries = MagicMock()
+    config_entries.async_update_entry = MagicMock(
+        side_effect=_apply_async_update_entry
+    )
+    return config_entries
+
+
+def install_applying_config_entries(hass: Any) -> MagicMock:
+    """Attach an applying ``config_entries`` mock to ``hass`` and return it."""
+    hass.config_entries = make_applying_config_entries()
+    return hass.config_entries
