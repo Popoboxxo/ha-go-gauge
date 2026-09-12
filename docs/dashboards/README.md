@@ -224,6 +224,15 @@ bleibt icon-only im Kachel-Header, die **API-Reachability**
 `sensor.go_gauge_free_models` — diese Entities existieren nur einmal
 (Catalog Owner).
 
+> **Hinweis — Account-`entity_id`s illustrativ:** Die hier und in der globalen
+> Kopfzeile genannten Account-`entity_id`s (`sensor.go_gauge_models`,
+> `sensor.go_gauge_live_models`, `sensor.go_gauge_cheapest_model`,
+> `sensor.go_gauge_free_models`, `binary_sensor.go_gauge_api_reachable`) sind
+> **illustrativ** und können je nach Device-Prefix/Systemsprache abweichen.
+> Verbindlich ist der `unique_id`-Suffix-Match aus der Entity-Registry:
+> `_model_catalog`, `_models_live_count`, `_cheapest_model`, `_free_models`,
+> `_api_reachable` (siehe [`entity-map.yaml`](entity-map.yaml)).
+
 ### Bindungs-Caveat
 
 `slug_a` und `slug_b` können sich unterscheiden: Nach der v7-Migration tragen
