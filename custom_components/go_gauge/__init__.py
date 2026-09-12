@@ -90,6 +90,8 @@ def _make_entity_id_migration_callback(
 
     def _callback(registry_entry: Any) -> dict[str, str] | None:
         current = getattr(registry_entry, "entity_id", None)
+        if not isinstance(current, str):
+            return None
         target = migrate_entity_id(current)
         if target is None:
             return None

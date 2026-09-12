@@ -21,7 +21,6 @@ import sys
 import types
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 BASE = Path(__file__).resolve().parent.parent / "custom_components" / "go_gauge"
 
@@ -513,6 +512,7 @@ def test_window_field_mapping_all_three_windows_distinct():
 
 
 if __name__ == "__main__":
-    import pytest
     import sys
+
+    import pytest
     sys.exit(pytest.main([__file__, "-v"]))

@@ -17,12 +17,11 @@ from typing import Any
 import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
-    CONF_WORKSPACE_NAME,
     DEFAULT_WARN_PERCENT,
     DOMAIN,
     USER_AGENT,
@@ -53,12 +52,19 @@ async def _probe_token(hass: HomeAssistant, token: str) -> tuple[bool, str | Non
         return False, "cannot_connect"
 
 
-class GoGaugeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+# `domain=` is consumed by HA's ``ConfigFlow.__init_subclass__``. That symbol
+# is only visible when homeassistant is type-checked: CI deliberately omits the
+# package and the pyproject mypy override skips it locally, so the base
+# degrades to ``object`` and the kwarg raises a false ``call-arg`` error there.
+# Ignore is scoped to that single, HA-typing-only diagnostic.
+class GoGaugeConfigFlow(  # type: ignore[call-arg]
+    config_entries.ConfigFlow, domain=DOMAIN
+):
     """Ein Workspace = eine Instanz: Name + Token."""
 
     VERSION = 7
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         name = (user_input or {}).get("workspace_name", "")
         token = ((user_input or {}).get("token", "") or "").strip()
@@ -111,7 +117,7 @@ class GoGaugeOptionsFlowHandler(config_entries.OptionsFlow):
     def __init__(self, config_entry) -> None:
         self.entry = config_entry
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             new_data = {**self.entry.data}
             if user_input.get("workspace_name"):
@@ -133,11 +139,17 @@ class GoGaugeOptionsFlowHandler(config_entries.OptionsFlow):
             CONF_AUTO_UPDATE_USAGE,
             CONF_MODELS_REFRESH_MINUTES,
             CONF_PACE_RED_PERCENT,
-            CONF_WARN_PERCENT,
             CONF_USAGE_REFRESH_MINUTES,
+            CONF_WARN_PERCENT,
             DEFAULT_MODELS_REFRESH_MINUTES,
             DEFAULT_PACE_RED_PERCENT,
             DEFAULT_USAGE_REFRESH_MINUTES,
+        )
+        usage_minutes_default = opts.get(
+            CONF_USAGE_REFRESH_MINUTES, DEFAULT_USAGE_REFRESH_MINUTES
+        )
+        models_minutes_default = opts.get(
+            CONF_MODELS_REFRESH_MINUTES, DEFAULT_MODELS_REFRESH_MINUTES
         )
         schema = vol.Schema({
             vol.Required("workspace_name",
@@ -149,10 +161,10 @@ class GoGaugeOptionsFlowHandler(config_entries.OptionsFlow):
             vol.Required(CONF_AUTO_UPDATE_USAGE,
                          default=opts.get(CONF_AUTO_UPDATE_USAGE, True)): bool,
             vol.Required(CONF_USAGE_REFRESH_MINUTES,
-                         default=opts.get(CONF_USAGE_REFRESH_MINUTES, DEFAULT_USAGE_REFRESH_MINUTES)): int,
+                         default=usage_minutes_default): int,
             vol.Required(CONF_AUTO_UPDATE_MODELS,
                          default=opts.get(CONF_AUTO_UPDATE_MODELS, True)): bool,
             vol.Required(CONF_MODELS_REFRESH_MINUTES,
-                         default=opts.get(CONF_MODELS_REFRESH_MINUTES, DEFAULT_MODELS_REFRESH_MINUTES)): int,
+                         default=models_minutes_default): int,
         })
         return self.async_show_form(step_id="init", data_schema=schema)

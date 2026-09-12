@@ -27,6 +27,10 @@ class GoGaugeEntityBase(CoordinatorEntity):
 
     _attr_has_entity_name = True
 
+    # Narrow the base ``CoordinatorEntity.coordinator`` type so platform
+    # subclasses can access Go Gauge-specific attributes without casts.
+    coordinator: GoGaugeCoordinator
+
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._entry = entry

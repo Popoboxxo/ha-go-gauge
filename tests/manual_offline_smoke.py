@@ -26,7 +26,6 @@ v0.3.1: Two-cycle Coordinator + Catalog-Sensor + no_subscription-Handling
 import asyncio
 import importlib.util
 import json
-import logging
 import sys
 import types
 from pathlib import Path
