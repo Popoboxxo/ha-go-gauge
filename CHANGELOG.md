@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.5.1] - 2026-09-12
+
+### Summary
+
+Bugfix/maintenance release — **no breaking changes** and no functional changes
+to the integration itself. It resolves the HACS validation blocker for missing
+brand assets and hardens the CI pipeline with linting, type-checking, JSON
+consistency checks and an automated release tag/manifest version check.
+
+### Fixed
+
+- HACS validation blocker "brand assets": added the integration brand icon and
+  logo (`custom_components/go_gauge/brand/icon.png` and `logo.png`) so HACS
+  validation passes and the integration displays its own logo in the store
+- CI reliability: the `tests` job installs `pytest-asyncio` explicitly, so the
+  async tests no longer depend on an implicit plugin resolution
+
+### Added
+
+- CI jobs in `.github/workflows/validate.yml`: `tests` (pytest), `lint`
+  (ruff), `json-consistency` (translation/meta-file parity) and `mypy`
+- Separate `Release Check` workflow (`.github/workflows/release-check.yml`)
+  enforcing tag ↔ `manifest.json` version sync on every published release
+  (`scripts/check_version_sync.py`)
+
+### Changed
+
+- Added ruff and mypy configuration in `pyproject.toml` so linting and
+  type-checking behave identically on a developer machine and in CI
+- Resolved ruff and mypy findings across the integration code — behavior
+  preserving, integration logic unchanged
+- Documentation: dashboard matrix switched to `decluttering-card-plus`, stale
+  slug fix, binding notes, and dynamic CI/release badges in the README
+
+### Full Changelog
+
+https://github.com/Popoboxxo/ha-go-gauge/compare/v1.5.0...v1.5.1
+
 ## [1.5.0] - 2026-09-12
 
 > **SemVer note:** this is released as **1.5.0 (MINOR)** by explicit maintainer
