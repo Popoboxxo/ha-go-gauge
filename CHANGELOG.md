@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.5.2] - 2026-09-13
+
+### Summary
+
+Bugfix release — **no breaking changes** and no entity or `unique_id` changes.
+It makes runtime settings (number/switch) reflect immediately in the UI,
+reschedules the armed refresh timer when the interval changes, fixes an
+options-persist flag that could silently drop a later real change, and removes
+a false-positive schema warning on successful usage fetches (Audit 2026-09-13,
+RC-4).
+
+### Fixed
+
+- Number/switch entities now call `async_write_ha_state()`, so the UI shows the
+  new value immediately instead of waiting for the next coordinator poll (which
+  never came with auto-update off)
+- `GoGaugeCoordinator.recalculate_interval()` now reschedules the armed refresh
+  timer via `_schedule_refresh()`; previously it only stored the new
+  `update_interval` while a running timer kept the old interval
+- `persist_options()` resets the `_skip_reload` flag when `async_update_entry`
+  reports no actual change, so a subsequent real options change is no longer
+  silently dropped without a reload
+- Removed a false-positive schema warning: the top-level `status` field is no
+  longer required in the usage-response check (the parser already defaults it to
+  `ok`), so successful fetches no longer log a missing-field warning
+  (Audit 2026-09-13, RC-4)
+
+### Added
+
+- Regression tests (`tests/test_runtime_settings.py`) covering the number/switch
+  state write, the refresh-timer reschedule and the options-persist flag reset
+- Coordinator schema-field validation tests
+  (`tests/test_coordinator_field_validation.py`)
+
+### Full Changelog
+
+https://github.com/Popoboxxo/ha-go-gauge/compare/v1.5.1...v1.5.2
+
 ## [1.5.1] - 2026-09-12
 
 ### Summary
