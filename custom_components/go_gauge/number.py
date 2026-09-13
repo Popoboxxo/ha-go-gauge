@@ -72,6 +72,7 @@ class WarnPercentNumber(_SettingNumber):
         self.coordinator.warn_percent = int(value)
         persist_options(self.hass, self._entry, self.coordinator,
                         warn_percent=int(value))
+        self.async_write_ha_state()
 
 
 class PaceRedPercentNumber(_SettingNumber):
@@ -94,6 +95,7 @@ class PaceRedPercentNumber(_SettingNumber):
         self.coordinator.pace_red_percent = int(value)
         persist_options(self.hass, self._entry, self.coordinator,
                         pace_red_percent=int(value))
+        self.async_write_ha_state()
 
 
 class UsageRefreshMinutesNumber(_SettingNumber):
@@ -117,6 +119,7 @@ class UsageRefreshMinutesNumber(_SettingNumber):
         self.coordinator.recalculate_interval()
         persist_options(self.hass, self._entry, self.coordinator,
                         usage_refresh_minutes=int(value))
+        self.async_write_ha_state()
 
 
 class ModelsRefreshMinutesNumber(_SettingNumber):
@@ -140,3 +143,4 @@ class ModelsRefreshMinutesNumber(_SettingNumber):
         self.coordinator.recalculate_interval()
         persist_options(self.hass, self._entry, self.coordinator,
                         models_refresh_minutes=int(value))
+        self.async_write_ha_state()

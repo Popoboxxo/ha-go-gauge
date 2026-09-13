@@ -162,5 +162,28 @@ def test_synthetic_no_subscription_response_does_not_trigger_false_positive(capl
     assert warnings == []
 
 
+def test_real_success_response_without_top_level_status_not_flagged(caplog):
+    """RC-4 (Audit 2026-09-13): the real success response is {"usage": {...}}
+    WITHOUT a top-level "status". The parser defaults status to "ok", so the
+    old "status" required-field check fired a false-positive schema-drift
+    warning on EVERY successful fetch (1371 occurrences). No warning expected
+    and the workspace status must still be "ok"."""
+    response = {
+        "usage": {
+            "rolling": {"percent": 1.0, "status": "ok", "resetsAt": "2026-09-05T00:00:00Z"},
+            "weekly": {"percent": 2.0, "status": "ok", "resetsAt": "2026-09-05T00:00:00Z"},
+            "monthly": {"percent": 3.0, "status": "ok", "resetsAt": "2026-09-05T00:00:00Z"},
+        },
+    }
+    c = _make_coordinator(response)
+
+    with caplog.at_level(logging.WARNING, logger=coord._LOGGER.name):
+        result = asyncio.run(c._async_update_data())
+
+    assert result["workspaces"][0]["status"] == "ok"
+    warnings = [r for r in caplog.records if "erwartete Felder fehlen" in r.getMessage()]
+    assert warnings == []
+
+
 if __name__ == "__main__":
     import _pytest.logging  # noqa: F401  (ensures caplog fixture available if run standalone)

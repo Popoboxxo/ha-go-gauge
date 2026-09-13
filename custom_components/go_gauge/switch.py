@@ -47,12 +47,14 @@ class AutoUpdateUsageSwitch(GoGaugeEntityBase, SwitchEntity):
         self.coordinator.recalculate_interval()
         persist_options(self.hass, self._entry, self.coordinator,
                         auto_update_usage=True)
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         self.coordinator.auto_usage = False
         self.coordinator.recalculate_interval()
         persist_options(self.hass, self._entry, self.coordinator,
                         auto_update_usage=False)
+        self.async_write_ha_state()
 
 
 class AutoUpdateModelsSwitch(GoGaugeEntityBase, SwitchEntity):
@@ -74,9 +76,11 @@ class AutoUpdateModelsSwitch(GoGaugeEntityBase, SwitchEntity):
         self.coordinator.recalculate_interval()
         persist_options(self.hass, self._entry, self.coordinator,
                         auto_update_models=True)
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         self.coordinator.auto_models = False
         self.coordinator.recalculate_interval()
         persist_options(self.hass, self._entry, self.coordinator,
                         auto_update_models=False)
+        self.async_write_ha_state()
