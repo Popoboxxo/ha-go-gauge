@@ -350,7 +350,13 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._usage_samples: dict[str, list[tuple[datetime, float]]] = {}
 
     def recalculate_interval(self) -> None:
-        """Intervall nach Auto-Update-Schaltern/Minuten NEU setzen (live)."""
+        """Intervall nach Auto-Update-Schaltern/Minuten NEU setzen (live).
+
+        Der Setter von ``update_interval`` speichert nur den neuen Wert; ein
+        bereits laufender Refresh-Timer laeuft sonst mit dem ALTEN Intervall
+        weiter. ``_schedule_refresh()`` meldet den scharfen Timer ab und plant
+        den naechsten Abruf mit dem neuen Intervall.
+        """
         intervals = []
         if self.auto_usage:
             intervals.append(self.usage_minutes * 60)
@@ -358,6 +364,7 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             intervals.append(self.models_minutes * 60)
         effective = min(intervals) if intervals else 86400
         self.update_interval = timedelta(seconds=effective)
+        self._schedule_refresh()
         _LOGGER.info("Go Gauge: Update-Intervall -> %s s (usage=%s/%smin, models=%s/%smin)",
                      effective, self.auto_usage, self.usage_minutes,
                      self.auto_models, self.models_minutes)
@@ -430,11 +437,16 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # 403-Antworten (status in no_subscription/error, siehe
                     # fetch_usage) haben absichtlich ein leeres "usage": {} und
                     # zaehlen daher nicht als Schema-Drift.
+                    #
+                    # KEIN "status" als Pflichtfeld: die reale Erfolgsantwort
+                    # ist {"usage": {...}} ohne Top-Level-status; der Parser
+                    # defaultet bereits auf "ok" (siehe oben), und status wird
+                    # hier nur optional uebernommen. Eine Pflichtpruefung wuerde
+                    # bei JEDEM erfolgreichen Abruf einen Falsch-Positiv-Alarm
+                    # erzeugen (Audit 2026-09-13, RC-4).
                     is_synthetic_error = res.get("status") in ("no_subscription", "error")
                     if not is_synthetic_error and "usage" not in res:
                         missing_fields.add("usage")
-                    if not is_synthetic_error and "status" not in res:
-                        missing_fields.add("status")
                     api = res.get("usage") or {}
                     for api_key, win in (
                         ("rolling", "5h"),

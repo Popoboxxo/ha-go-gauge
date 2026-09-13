@@ -69,12 +69,23 @@ class GoGaugeAccountEntityBase(GoGaugeEntityBase):
 
 
 def persist_options(hass: HomeAssistant, entry: ConfigEntry,
-                    coordinator: GoGaugeCoordinator, **changes: Any) -> None:
+                    coordinator: GoGaugeCoordinator, **changes: Any) -> bool:
     """Runtime-Entity-Aenderungen persistent speichern OHNE Entry-Reload.
 
     Die Entities haben den Coordinator bereits live umgestellt; der
     Update-Listener sieht das _skip_reload-Flag und laesst ihn laufen.
+
+    HA feuert die Update-Listener nur bei einer ECHTEN Aenderung und
+    ``async_update_entry`` gibt genau das als bool zurueck. Wird derselbe Wert
+    erneut gesetzt (Switch auf bereits-an, Number auf den gleichen Wert),
+    bleibt sonst das Flag gesetzt und die NAECHSTE echte Options-Aenderung
+    (z. B. Options-Flow) wuerde ohne Reload verworfen. Daher das Flag sofort
+    zuruecksetzen, wenn nichts geaendert wurde - bei ``True`` laeuft der
+    (asynchron eingeplante) Listener und setzt es selbst zurueck.
     """
     opts = {**entry.options, **changes}
     coordinator._skip_reload = True
-    hass.config_entries.async_update_entry(entry, options=opts)
+    changed = hass.config_entries.async_update_entry(entry, options=opts)
+    if not changed:
+        coordinator._skip_reload = False
+    return changed
