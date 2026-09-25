@@ -81,9 +81,16 @@ class SubscriptionActiveBinarySensor(GoGaugeEntityBase, BinarySensorEntity):
     """ON = Workspace hat ein aktives Abo (API liefert Nutzungsdaten).
 
     OFF + Attribut 'note' wenn 403 EntitlementError (kein aktives Abo).
+
+    KEIN device_class (Fix 2026-09-25): CONNECTIVITY veranlasst HA, den
+    Zustand als "Getrennt" zu rendern. Das ist doppelt falsch - die API ist
+    in diesem Fall erreichbar, es fehlt das Abo. Zwei-Fronten-Verwirrung:
+    der Nutzer las "Getrennt" und hielt die API fuer tot (falscher Diagnose-
+    Weg, siehe auch den neuen ApiStatusSensor). Ein Abo ist ein Zustand der
+    Subskription, nicht der Verbindung - der einzige connectivity-Sensor
+    der Instanz ist ApiReachableBinarySensor.
     """
 
-    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_icon = "mdi:shield-check-outline"
     _attr_translation_key = "subscription_active"
 

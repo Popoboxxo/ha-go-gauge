@@ -111,6 +111,7 @@ Namen automatisch, z. B. Umlaute → Basisvokal).
 | `sensor.go_gauge_team_weekly_burn_rate` | z. B. `4.2` (%/h) — Verbrauchstempo der letzten 2 h |
 | `binary_sensor.go_gauge_team_weekly_rate_limited` | ON = für dieses Fenster rate-limited |
 | `binary_sensor.go_gauge_team_subscription_active` | ON = aktives Abo, OFF + `note` = kein Abo |
+| `sensor.go_gauge_team_api_status` | `ok` / `no_subscription` / `rate_limited` / `auth_error` / `api_error` / `unknown` — **nennt die Ursache**, wenn keine Daten kommen. Attribute: `raw_status`, `note` (Rohursache inkl. URL/Statuscode) |
 | `binary_sensor.go_gauge_api_reachable` | API-Status (Gerät „Go Gauge Konto") |
 | `sensor.go_gauge_models` | 29 — Attribute: `catalog_json`, `ranking_by_cost`, … (Gerät „Go Gauge Konto") |
 | `sensor.go_gauge_live_models` | 29 (Gerät „Go Gauge Konto") |

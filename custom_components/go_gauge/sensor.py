@@ -70,6 +70,9 @@ async def async_setup_entry(
                 coordinator, entry, key=key, win=win, label=label))
             entities.append(BurnRateSensor(
                 coordinator, entry, key=key, win=win, label=label))
+        # API-Status je Workspace (neu 2026-09-25): benennt die URSACHE
+        # statt nur ja/nein - der Abo-Binary-Sensor allein war mehrdeutig.
+        entities.append(ApiStatusSensor(coordinator, entry, key=key))
 
     if getattr(coordinator, "is_catalog_owner", True):
         # Modell-Katalog: EIN Sensor mit JSON-Attributen (dynamisch)
@@ -440,3 +443,78 @@ class FreeModelsSensor(GoGaugeAccountEntityBase, SensorEntity):
     def native_value(self) -> str | None:
         free = (self.coordinator.data.get("models_block") or {}).get("free_models") or []
         return ", ".join(free) if free else None
+
+
+class ApiStatusSensor(GoGaugeEntityBase, SensorEntity):
+    """Warum liefert die API fuer diesen Workspace keine Daten? (neu 2026-09-25)
+
+    Anlass: Der Abo-Sensor stand auf "Getrennt" (device_class connectivity),
+    was als API-Ausfall gelesen wurde. Es fehlte ein Sensor, der die
+    *Ursache* benennt statt nur ein Ja/Nein zu liefern.
+
+    Bewusst PRO WORKSPACE und nicht accountweit: der accountweite
+    ApiReachableBinarySensor ist "irgendwas ging schief"-aggregiert und
+    verdeckt genau den Fall, den man sehen will - WS-A mit Abo liefert
+    Daten, WS-B hat keins. Ein Gesamtsensor wuerde beide als "erreichbar"
+    gruen zeigen.
+
+    Enum-Zustand, damit HA-Marken/Alarme darauf aufbauen koennen:
+
+      ok              API antwortet mit Nutzungsdaten
+      no_subscription 403 EntitlementError - Token gueltig, Abo fehlt
+      rate_limited     API erreichbar, 100% des Fensters verbraucht
+      auth_error       401 - Token ungueltig/abgelaufen (Konfig, kein Code-Bug)
+      api_error        403 ohne EntitlementError ODER andere HTTP-Fehler
+                       (Cloudflare-Bot-Score, Netzwerk, 5xx) - transient
+    """
+
+    _attr_icon = "mdi:cloud-alert"
+    _attr_translation_key = "api_status"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["ok", "no_subscription", "rate_limited",
+                     "auth_error", "api_error", "unknown"]
+    _attr_entity_registry_enabled_default = True
+
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
+                 key: str) -> None:
+        super().__init__(coordinator, entry)
+        self._key = key
+        self._attr_unique_id = f"{entry.entry_id}_{key}_api_status"
+
+    def _resolve(self) -> str:
+        ws = self._ws(self._key)
+        if not ws:
+            return "unknown"
+        status = ws.get("status")
+        # "ok" heisst: Abruf technisch erfolgreich. Ist der aktuelle
+        # Fensterapost aber rate-limited, ist das die relevantere Ursache
+        # als "alles gut" - der Nutzer will wissen, warum 100% steht.
+        if status == "ok":
+            for blk in (ws.get("windows") or {}).values():
+                if isinstance(blk, dict) and blk.get("status") == "rate-limited":
+                    return "rate_limited"
+            return "ok"
+        if status == "no_subscription":
+            return "no_subscription"
+        if status == "error":
+            # 401/403-ohne-Entitlement sind nicht transient - die Note
+            # traegt den Originaltyp, den der Coordinator mitgibt.
+            note = str(ws.get("note") or "")
+            if "AuthError" in note or "401" in note:
+                return "auth_error"
+            return "api_error"
+        return "unknown"
+
+    @property
+    def native_value(self) -> str | None:
+        return self._resolve()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        ws = self._ws(self._key) or {}
+        return {
+            "workspace_key": self._key,
+            "raw_status": ws.get("status"),
+            "note": ws.get("note"),
+            "last_update_success": self.coordinator.last_update_success,
+        }

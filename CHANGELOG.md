@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.6.0] - 2026-09-25
+
+### Summary
+
+**Fix:** `binary_sensor.<name>_subscription_active` trug `device_class:
+CONNECTIVITY`. Home Assistant rendert diesen Zustand zwingend als **„Getrennt"** —
+obwohl die API in dem Fall erreichbar ist und nur das Abo fehlt. Die
+Verwechslung ist in die Oberfläche eingebaut: der Nutzbarkeits-Status war
+falsch ablesbar und führte zur Fehldiagnose „API kaputt". `CONNECTIVITY` ist
+jetzt ausschließlich für `binary_sensor.<name>_api_reachable` zuständig.
+
+**Feature:** neuer Enum-Sensor `sensor.<name>_api_status` benennt die
+*Ursache* statt eines Ja/Nein zu liefern.
+
+Keine breaking changes: die `unique_id` des Abo-Sensors bleibt unverändert
+(nur sein `device_class` entfällt), der neue Sensor ist additiv, die
+ConfigEntry-VERSION bleibt unangetastet.
+
+### Added
+
+- **`sensor.<name>_api_status` (Enum, pro Workspace)** — Zustände:
+  `ok`, `no_subscription`, `rate_limited`, `auth_error`, `api_error`,
+  `unknown`. Bewusst **pro Workspace** statt accountweit: der vorhandene
+  `api_reachable`-Sensor aggregiert „irgendwas ging schief" und verdeckt
+  genau den Fall, den man sehen will — Workspace A liefert Daten,
+  Workspace B nicht. Attribute: `raw_status`, `note` (Rohursache inkl.
+  URL/Statuscode), `last_update_success`.
+- `status=ok` bei gleichzeitig `rate-limited` im aktuellen Fenster meldet
+  `rate_limited` statt `ok` — sonst „alles gut" bei 100 % Verbrauch.
+
+### Fixed
+
+- `SubscriptionActiveBinarySensor` ohne `device_class`; die Verwechslung
+  von Abo-Status und Verbindungsstatus entfällt. Der einzige
+  „Getrennt"-Sensor der Instanz ist `ApiReachableBinarySensor`.
+- Drei Test-Dateien brachen beim Einbau des Enum-Sensors ab: deren
+  `SensorDeviceClass`-Stub kannte `enum` nicht. Stub ergänzt.
+
+### Verified
+
+- 413 Tests grün (11 neue in `tests/test_api_status_and_subscription.py`),
+  `ruff check` sauber.
+- E2E auf HA 2026.9.1 (sandbox-120): beide Änderungen live bestätigt —
+  `subscription_active` ohne `device_class`, `api_status` wird als Enum mit
+  allen sechs Optionen registriert und liefert `auth_error` inklusive
+  Ursachen-Note (`401, message='Unauthorized', url=...`).
+
 ## [1.5.2] - 2026-09-13
 
 ### Summary
