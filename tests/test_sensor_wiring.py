@@ -46,7 +46,8 @@ def _enum_like(*members):
 
 sys.modules["homeassistant.components.sensor"].SensorStateClass = _enum_like("measurement")
 sys.modules["homeassistant.components.sensor"].SensorDeviceClass = _enum_like(
-    "timestamp", "duration")
+    "timestamp", "duration", "enum"
+)
 
 
 def _load(name, path):

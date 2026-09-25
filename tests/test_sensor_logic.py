@@ -43,7 +43,8 @@ class _CoordinatorEntity:
 _uc.CoordinatorEntity = _CoordinatorEntity
 sys.modules["homeassistant.components.sensor"].SensorStateClass = _enum_like("measurement")
 sys.modules["homeassistant.components.sensor"].SensorDeviceClass = _enum_like(
-    "timestamp", "duration")
+    "timestamp", "duration", "enum"
+)
 
 
 def _load_module(name, path):
