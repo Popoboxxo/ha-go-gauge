@@ -78,3 +78,16 @@ jobs:
       # ignore_missing_imports (homeassistant is intentionally not installed).
       - name: Run mypy
         run: mypy
+
+  canon-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # go_gauge is the canon master: the checker must exit 0 with 0 warnings.
+      - name: Check integration against the Gauge entity canon
+        run: python external/ha-gauge-standard/scripts/check_canon.py .

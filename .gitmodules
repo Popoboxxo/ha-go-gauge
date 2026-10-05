@@ -1,3 +1,6 @@
 [submodule ".agent-meta"]
 	path = .agent-meta
 	url = https://github.com/Popoboxxo/agent-meta
+[submodule "external/ha-gauge-standard"]
+	path = external/ha-gauge-standard
+	url = https://github.com/Popoboxxo/ha-gauge-standard
