@@ -13,6 +13,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .const import (
     CONF_USAGE_REFRESH_MINUTES,
@@ -255,6 +256,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # retryt automatisch im Hintergrund.
     try:
         await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryAuthFailed:
+        # Token ungueltig/abgelaufen: HA muss die Reauth-UI starten. Den
+        # koordinator (falls bereits registriert) aus der Registry entfernen
+        # und das Signal weiterreichen - NICHT im toleranten Pfad unten
+        # verschlucken, sonst bliebe die Integration still auf Alt-Daten
+        # stehen statt den Nutzer zur Neu-Anmeldung zu fuehren.
+        domain_data = hass.data.get(DOMAIN)
+        if isinstance(domain_data, dict):
+            domain_data.pop(entry.entry_id, None)
+        raise
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning(
             "Go Gauge %s: erster Abruf fehlgeschlagen (%s) - Setup laeuft weiter, "

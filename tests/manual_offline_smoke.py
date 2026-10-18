@@ -38,6 +38,9 @@ class _Flexible(types.ModuleType):
         return type(name, (), {})
 
 
+# NOTE: "voluptuous" is deliberately NOT faked here. It is a real pip package
+# with no homeassistant dependency and must never be faked (see
+# tests/conftest.py docstring).
 for name in [
     "homeassistant", "homeassistant.core", "homeassistant.helpers",
     "homeassistant.helpers.aiohttp_client", "homeassistant.helpers.update_coordinator",
@@ -45,7 +48,6 @@ for name in [
     "homeassistant.components.sensor", "homeassistant.components.binary_sensor",
     "homeassistant.components.button", "homeassistant.components.diagnostics",
     "homeassistant.config_entries", "homeassistant.data_entry_flow",
-    "voluptuous",
 ]:
     sys.modules[name] = _Flexible(name)
 sys.modules["homeassistant"].__path__ = []

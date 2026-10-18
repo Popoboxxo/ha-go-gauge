@@ -463,7 +463,8 @@ class ApiStatusSensor(GoGaugeEntityBase, SensorEntity):
       ok              API antwortet mit Nutzungsdaten
       no_subscription 403 EntitlementError - Token gueltig, Abo fehlt
       rate_limited     API erreichbar, 100% des Fensters verbraucht
-      auth_error       401 - Token ungueltig/abgelaufen (Konfig, kein Code-Bug)
+      auth_error       401 - Token ungueltig/abgelaufen (Konfig, kein Code-Bug);
+                       strukturierter Workspace-Status "auth_error"
       api_error        403 ohne EntitlementError ODER andere HTTP-Fehler
                        (Cloudflare-Bot-Score, Netzwerk, 5xx) - transient
     """
@@ -481,11 +482,43 @@ class ApiStatusSensor(GoGaugeEntityBase, SensorEntity):
         self._key = key
         self._attr_unique_id = f"{entry.entry_id}_{key}_api_status"
 
+    @property
+    def available(self) -> bool:
+        """Stay available even when the coordinator's last refresh failed.
+
+        Deliberate override of ``CoordinatorEntity.available`` (mirrors the
+        canon pattern of the account/section diagnostic in the reference
+        integration, where a global diagnostic returns ``True``). The inherited
+        property reports ``False`` whenever ``coordinator.last_update_success``
+        is ``False`` - and on the auth path that flag is set by BOTH the
+        coordinator (see ``GoGaugeCoordinator._async_update_data``) and Home
+        Assistant itself when ``ConfigEntryAuthFailed`` propagates. The
+        inherited property would therefore render exactly THIS sensor
+        ``unavailable`` and HA would drop its state/attributes, so the
+        structured ``auth_error`` cause this sensor exists to surface would
+        never be visible - defeating spec F ("Canon-State bleibt erreichbar").
+
+        The sensor's whole purpose is to NAME the cause when data is missing:
+        the enum state (``ok``/``no_subscription``/``auth_error``/``api_error``/
+        ``unknown``) carries the information, so staying available is safe and
+        intentional. Only this diagnostic class opts out - the data sensors
+        keep the inherited behaviour and go unavailable on auth failure.
+        """
+        return True
+
     def _resolve(self) -> str:
         ws = self._ws(self._key)
         if not ws:
             return "unknown"
         status = ws.get("status")
+        # Strukturierter Status ist der Kanon: der Coordinator markiert einen
+        # 401-Workspace explizit mit "auth_error" (siehe
+        # GoGaugeCoordinator._async_update_data). Frueher wurde das ueber einen
+        # bruechigen String-Match ("401"/"AuthError" in der note) erraten - das
+        # ist ersetzt, damit Textaenderungen an der note den Zustand nicht mehr
+        # still brechen koennen.
+        if status == "auth_error":
+            return "auth_error"
         # "ok" heisst: Abruf technisch erfolgreich. Ist der aktuelle
         # Fensterapost aber rate-limited, ist das die relevantere Ursache
         # als "alles gut" - der Nutzer will wissen, warum 100% steht.
@@ -497,11 +530,7 @@ class ApiStatusSensor(GoGaugeEntityBase, SensorEntity):
         if status == "no_subscription":
             return "no_subscription"
         if status == "error":
-            # 401/403-ohne-Entitlement sind nicht transient - die Note
-            # traegt den Originaltyp, den der Coordinator mitgibt.
-            note = str(ws.get("note") or "")
-            if "AuthError" in note or "401" in note:
-                return "auth_error"
+            # 403 ohne Entitlement / sonstige HTTP-Fehler: transient/unklar.
             return "api_error"
         return "unknown"
 
