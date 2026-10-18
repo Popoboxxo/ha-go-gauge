@@ -28,13 +28,17 @@ class _Flexible(types.ModuleType):
         return type(name, (), {})
 
 
+# NOTE: "voluptuous" is deliberately NOT faked here. It is a real pip package
+# with no homeassistant dependency and must never be faked (see
+# tests/conftest.py docstring); a fake here poisoned sys.modules for later
+# test modules and broke vol.Schema/vol.Required at runtime.
 for _name in [
     "homeassistant", "homeassistant.core", "homeassistant.helpers",
     "homeassistant.helpers.aiohttp_client", "homeassistant.helpers.update_coordinator",
     "homeassistant.helpers.entity_platform", "homeassistant.components",
     "homeassistant.components.sensor", "homeassistant.components.binary_sensor",
     "homeassistant.config_entries", "homeassistant.data_entry_flow",
-    "voluptuous", "aiohttp",
+    "aiohttp",
 ]:
     sys.modules[_name] = _Flexible(_name)
 sys.modules["homeassistant"].__path__ = []
@@ -147,9 +151,10 @@ def test_api_status_no_subscription():
     assert _make_status_sensor(ws).native_value == "no_subscription"
 
 
-def test_api_status_auth_error_recognized_from_note():
-    """401 = Token ungueltig. Das ist Konfig, kein transienter API-Fehler."""
-    ws = _ws("error", note="HTTP 403 (AuthError) - moeglicherweise Rate-Limit")
+def test_api_status_auth_error_recognized_from_structured_status():
+    """401 = Token ungueltig. Der Coordinator meldet den kanonischen
+    strukturierten Status "auth_error" (nicht mehr per note-String-Match)."""
+    ws = _ws("auth_error", note="HTTP 401 - token invalid/expired")
     assert _make_status_sensor(ws).native_value == "auth_error"
 
 

@@ -199,6 +199,19 @@ def install_ha_stubs() -> None:
     sys.modules["homeassistant.config_entries"].ConfigFlow = _FakeConfigFlow
     sys.modules["homeassistant.core"].callback = _identity_callback
 
+    # Real ``BaseException`` subclasses (not `_Flexible` throwaways): the
+    # integration raises/catches ``ConfigEntryAuthFailed`` (reauth) and
+    # ``ConfigEntryNotReady``. A plain `type(name, (), {})` cannot be used in an
+    # ``except`` clause ("catching classes that do not inherit from
+    # BaseException is not allowed") and breaks isinstance-based tests, so the
+    # faked module must carry actual exception types - mirroring the reference
+    # integration's conftest.
+    _exceptions = sys.modules["homeassistant.exceptions"]
+    _exceptions.ConfigEntryAuthFailed = type(
+        "ConfigEntryAuthFailed", (Exception,), {}
+    )
+    _exceptions.ConfigEntryNotReady = type("ConfigEntryNotReady", (Exception,), {})
+
     # aiohttp: `config_flow.py` / `coordinator.py` call
     # `aiohttp.ClientTimeout(...)` and reference `aiohttp.ClientSession`. These
     # offline unit tests never perform real HTTP (sessions are always mocked),

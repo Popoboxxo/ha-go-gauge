@@ -15,6 +15,7 @@ from typing import Any
 
 import aiohttp
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -30,6 +31,7 @@ from .const import (
     PRICING,
     USER_AGENT,
     WINDOW_SECONDS,
+    GoGaugeAuthError,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -220,6 +222,13 @@ class OpenCodeGoApiClient:
         headers = {**BROWSER_HEADERS, "Authorization": f"Bearer {token}"}
         async with self._session.get(USAGE_URL, headers=headers,
                                      timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            if resp.status == 401:
+                # Token fehlt/ungueltig/abgelaufen - KEIN transienter Fehler,
+                # sondern ein Konfigurationsproblem. Gezielt als GoGaugeAuthError
+                # melden; der Coordinator uebersetzt das in ConfigEntryAuthFailed
+                # und startet damit HAs Reauth-Flow statt still alte Daten zu
+                # behalten. (403 bleibt unten UNVERAENDERT behandelt.)
+                raise GoGaugeAuthError("HTTP 401 - token invalid/expired")
             if resp.status == 403:
                 # 403 hat ZWEI Ursachen - sauber trennen:
                 # a) EntitlementError = kein aktives Abo (gueltiger Token)
@@ -302,6 +311,12 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # them type-check against GoGaugeCoordinator instead of the HA base type.
     ws_name: str
     is_catalog_owner: bool
+    # Explicit type: the auth path assigns ``self.data`` from a snapshot that is
+    # derived from a previous ``self.data`` read (circular inference otherwise:
+    # "Cannot determine type of data"). The HA base class is skipped by mypy
+    # (homeassistant not installed), so without this declaration the attribute
+    # type would be inferred from that single self-referential assignment.
+    data: dict[str, Any]
 
     def __init__(self, hass: HomeAssistant, tokens: list[str],
                  options: dict[str, Any] | None = None) -> None:
@@ -395,6 +410,35 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         samples[:] = [s for s in samples if s[0] >= cutoff]
         del samples[:-64]
 
+    def _snapshot(
+        self,
+        now: datetime,
+        usage: list[dict[str, Any]],
+        models_block: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Build the coordinator snapshot returned by ``_async_update_data``.
+
+        Shared by the normal return path and the auth-failure path so the
+        published shape (keys, timestamps, toggles) stays identical. The auth
+        path uses it to publish a snapshot that marks the affected workspace
+        with ``status="auth_error"`` BEFORE raising ``ConfigEntryAuthFailed``.
+        """
+        return {
+            "fetched_at": now.isoformat(),
+            "last_usage_fetch": (
+                self.last_usage_fetch.isoformat() if self.last_usage_fetch else None
+            ),
+            "last_models_fetch": (
+                self.last_models_fetch.isoformat() if self.last_models_fetch else None
+            ),
+            "auto_usage": self.auto_usage,
+            "auto_models": self.auto_models,
+            "usage_refresh_minutes": self.usage_minutes,
+            "models_refresh_minutes": self.models_minutes,
+            "workspaces": usage,
+            "models_block": models_block,
+        }
+
     async def _async_update_data(self) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
 
@@ -403,6 +447,10 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # sondern letzten Stand behalten und Fehler nur als Attribut melden.
         prev_ws = {w["key"]: w for w in ((self.data or {}).get("workspaces") or [])}
         usage = list((self.data or {}).get("workspaces") or [])
+        # Capture the previous catalog block once: the auth path below needs it
+        # while publishing a fresh snapshot (and reading it here keeps the
+        # later ``self.data = ...`` assignment free of a self-referential read).
+        prev_models = (self.data or {}).get("models_block")
         usage_due = (
             self._tokens
             and (self.auto_usage
@@ -475,6 +523,28 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             pct = blk.get("percent")
                             if isinstance(pct, (int, float)):
                                 self._record_usage_sample(key, win, float(pct), now)
+                except GoGaugeAuthError as err:
+                    # Token ungueltig/abgelaufen (HTTP 401): NICHT als
+                    # transienten Fehler behandeln. Workspace strukturiert als
+                    # "auth_error" markieren, den Snapshot VOR dem Raise
+                    # publizieren (HA setzt self.data nur bei normalem Return -
+                    # ohne diesen Schritt saehe der ApiStatusSensor stale/
+                    # unknown) und dann ConfigEntryAuthFailed werfen, damit HA
+                    # die Reauth-UI startet. Gezielt VOR dem generischen
+                    # except Exception, damit der 401 nicht dort landet.
+                    entry["status"] = "auth_error"
+                    # The GoGaugeAuthError message already carries the readable,
+                    # non-secret cause ("HTTP 401 - token invalid/expired").
+                    # Do NOT prefix it again - that produced the duplicated
+                    # "HTTP 401 - token invalid/expired: HTTP 401 - token
+                    # invalid/expired" note. Fall back to that same phrase only
+                    # if a future raise ever carries an empty message.
+                    entry["note"] = str(err) or "HTTP 401 - token invalid/expired"
+                    fresh.append(entry)
+                    self.data = self._snapshot(now, fresh, prev_models)
+                    self.last_update_success = False
+                    raise ConfigEntryAuthFailed(
+                        "opencode.ai rejected the API token (HTTP 401)") from err
                 except Exception as err:  # noqa: BLE001
                     # TRANSIENTER Fehler (Netz/Cloudflare): LETZTEN STAND BEHALTEN
                     entry = dict(old) if old else entry
@@ -546,18 +616,4 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 else:
                     _LOGGER.warning("Modell-Refresh fehlgeschlagen, nutze alten Stand: %s", err)
 
-        return {
-            "fetched_at": now.isoformat(),
-            "last_usage_fetch": (
-                self.last_usage_fetch.isoformat() if self.last_usage_fetch else None
-            ),
-            "last_models_fetch": (
-                self.last_models_fetch.isoformat() if self.last_models_fetch else None
-            ),
-            "auto_usage": self.auto_usage,
-            "auto_models": self.auto_models,
-            "usage_refresh_minutes": self.usage_minutes,
-            "models_refresh_minutes": self.models_minutes,
-            "workspaces": usage,
-            "models_block": models_block,
-        }
+        return self._snapshot(now, usage, models_block)

@@ -7,6 +7,19 @@ from typing import Any
 DOMAIN = "go_gauge"
 
 
+class GoGaugeAuthError(Exception):
+    """opencode.ai rejected the API token (HTTP 401).
+
+    Deliberately defined in this HA-free module: ``const.py`` imports no
+    ``homeassistant`` code, so the exception stays unit-testable without a
+    Home-Assistant installation. ``OpenCodeGoApiClient.fetch_usage`` raises it
+    instead of a generic ``aiohttp.ClientResponseError``; the coordinator
+    translates it into ``homeassistant.exceptions.ConfigEntryAuthFailed`` so
+    Home Assistant starts its reauth flow instead of silently keeping the last
+    known data.
+    """
+
+
 def token_unique_id(token: str) -> str:
     """Return the ConfigEntry ``unique_id`` derived from an API token.
 

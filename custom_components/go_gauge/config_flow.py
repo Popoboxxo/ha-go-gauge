@@ -17,7 +17,7 @@ from typing import Any
 import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -64,6 +64,43 @@ class GoGaugeConfigFlow(  # type: ignore[call-arg]
 
     VERSION = 7
 
+    def __init__(self) -> None:
+        """Initialize the flow (needed for the reauth context entry)."""
+        super().__init__()
+        self._reauth_entry: ConfigEntry | None = None
+
+    def _context_entry(self) -> ConfigEntry | None:
+        """Resolve a flow entry from the context on old and new HA versions."""
+        entry_id = self.context.get("entry_id")
+        if not entry_id:
+            return None
+        return self.hass.config_entries.async_get_entry(entry_id)
+
+    def _update_entry_and_abort(
+        self,
+        entry: ConfigEntry,
+        *,
+        data: dict[str, Any],
+        reason: str,
+    ) -> ConfigFlowResult:
+        """Update and reload an entry, with a compatibility fallback.
+
+        ``unique_id`` is deliberately NOT passed: the reauth path must never
+        touch the stable entry/entity identity (iron rule).
+        """
+        update: dict[str, Any] = {"data": data}
+        reload_and_abort = getattr(self, "async_update_reload_and_abort", None)
+        if callable(reload_and_abort):
+            return reload_and_abort(entry, reason=reason, **update)
+        update_and_abort = getattr(self, "async_update_and_abort", None)
+        if callable(update_and_abort):
+            return update_and_abort(entry, reason=reason, **update)
+        self.hass.config_entries.async_update_entry(entry, **update)
+        schedule_reload = getattr(self.hass.config_entries, "async_schedule_reload", None)
+        if callable(schedule_reload):
+            schedule_reload(entry.entry_id)
+        return self.async_abort(reason=reason)
+
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         name = (user_input or {}).get("workspace_name", "")
@@ -104,6 +141,51 @@ class GoGaugeConfigFlow(  # type: ignore[call-arg]
             vol.Required("skip_validation", default=False): bool,
         })
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+
+    async def async_step_reauth(
+        self, entry_data: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Start the reauth flow when HA detects an invalid/expired token."""
+        self._reauth_entry = self._context_entry()
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask for a fresh token and validate it before updating ONLY the token.
+
+        ``unique_id`` / ``entry_id`` stay untouched (iron rule): no
+        ``async_set_unique_id`` call, no ``unique_id=`` argument - the stored
+        token is replaced, nothing else about the identity is re-derived.
+        """
+        entry = self._reauth_entry
+        if entry is None:
+            return self.async_abort(reason="reauth_failed")
+        errors: dict[str, str] = {}
+        token = str((user_input or {}).get("token", "") or "").strip()
+        if user_input is not None:
+            if not token:
+                errors["base"] = "missing_fields"
+            else:
+                ok, err = await _probe_token(self.hass, token)
+                if not ok and err == "invalid_token":
+                    errors["base"] = "invalid_token"
+                elif not ok:
+                    errors["base"] = "cannot_connect"
+                if not errors:
+                    # Preserve all other entry data (e.g. workspace_name); only
+                    # the token field changes.
+                    return self._update_entry_and_abort(
+                        entry,
+                        data={**entry.data, "token": token},
+                        reason="reauth_successful",
+                    )
+        schema = vol.Schema({
+            vol.Required("token", default=(user_input or {}).get("token", "")): str,
+        })
+        return self.async_show_form(
+            step_id="reauth_confirm", data_schema=schema, errors=errors
+        )
 
     @staticmethod
     @callback

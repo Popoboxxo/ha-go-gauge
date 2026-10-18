@@ -9,6 +9,12 @@
           "token": "This workspace's Go API token",
           "skip_validation": "Skip validation (save offline)"
         }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Go Gauge HA",
+        "data": {
+          "token": "Go API token for this workspace"
+        }
       }
     },
     "error": {
@@ -17,7 +23,9 @@
       "missing_fields": "Please provide both name and token."
     },
     "abort": {
-      "already_configured": "This token is already configured."
+      "already_configured": "This token is already configured.",
+      "reauth_failed": "The existing Go Gauge entry could not be found.",
+      "reauth_successful": "Go Gauge HA was re-authenticated successfully."
     }
   },
   "options": {
