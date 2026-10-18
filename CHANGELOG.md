@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.7.0] - 2026-10-18
+
+### Summary
+
+Abgelaufene/ungültige API-Tokens ließen sich nicht erneuern: HTTP 401 wurde wie
+ein transienter Netzfehler behandelt, Entities hingen dauerhaft auf
+`error`/`unavailable`, und der Token war nur per Löschen + Neuanlegen der
+Integration änderbar (Verlust von entity_ids/History). Jetzt löst 401 den
+Home-Assistant-Reauth-Flow aus; der Token wird an Ort und Stelle erneuert,
+`unique_id`/`entry_id` bleiben stabil.
+
+Keine breaking changes: `unique_id`/`entry_id` unverändert; ConfigEntry-VERSION
+bleibt 7 (kein Migrator). Keine Nutzeraktion nötig — ein Update genügt.
+
+### Added
+
+- HA-Reauth-Flow: `async_step_reauth` / `async_step_reauth_confirm` —
+  Token-Erneuerung direkt in der HA-UI, wenn der Token abläuft.
+- `sensor.<name>_api_status` bildet Auth-Fehler strukturell als `auth_error` ab
+  (kein String-Matching mehr) und bleibt in diesem Zustand sichtbar.
+
+### Fixed
+
+- 401 → `ConfigEntryAuthFailed` statt stillem Beibehalten alter Daten; Entities
+  werden `unavailable` und HA bietet die Reauth an.
+- `async_setup_entry` re-raist `ConfigEntryAuthFailed` nach
+  `hass.data`-Cleanup (Signal wird beim Start nicht mehr verschluckt).
+- 403 `EntitlementError` bleibt `no_subscription` (kein falscher Reauth-Trigger).
+
+### Verified
+
+- 426 Tests grün, `ruff`/`mypy`/JSON-Consistency sauber, Canon-Check 0 Fehler /
+  0 Warnungen.
+
 ## [1.6.0] - 2026-09-25
 
 ### Summary
