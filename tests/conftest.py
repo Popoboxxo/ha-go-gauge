@@ -46,7 +46,7 @@ import sys
 import types
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any
+from typing import Any, Iterator
 from unittest.mock import MagicMock
 
 
@@ -618,6 +618,16 @@ class FakeDeviceRegistry:
     The entity lookup ("is this device empty?") is delegated to an injectable
     entity registry, because the real one owns that relation: an empty
     duplicate device may be removed, a device with entities may not.
+
+    The registry exposes the non-deprecated production lookups as well:
+    ``async_get_devices(identifiers=...)`` (identifier-wide, HA 2026.8+) and
+    ``async_get_device_by_identifier(identifier, config_entry_id)`` (scoped to
+    one owning entry). ``self.devices`` stays a plain dict - the fake's internal
+    store and the tests' shortcut; the HA deprecation targets production code
+    only. Note that the real ``DeviceRegistry`` is NOT iterable (verified on HA
+    2026.9.1), so this double deliberately is not either - enumerating devices
+    goes through the ``devices`` collection (see
+    ``conftest.FakeDeviceRegistry.__iter__``).
     """
 
     def __init__(self, entity_registry: FakeEntityRegistry | None = None) -> None:
@@ -636,6 +646,69 @@ class FakeDeviceRegistry:
 
     # -- HA surface ---------------------------------------------------------
 
+    def __iter__(self) -> Iterator[DeviceEntry]:
+        """Refuse iteration, exactly like the real registry.
+
+        Verified on HA 2026.9.1: ``DeviceRegistry`` defines no ``__iter__``, so
+        ``for device in registry`` raises ``TypeError``. Device entries are
+        enumerated through the ``devices`` collection instead, which the
+        production helper ``account._device_entries`` handles in both of its
+        generations. A double that silently iterated would hide exactly that
+        broken call site, hence the explicit refusal.
+        """
+        raise TypeError("'FakeDeviceRegistry' object is not iterable")
+
+    def async_get_devices(
+        self,
+        *,
+        identifiers: set[tuple[str, str]] | None = None,
+        connections: set[tuple[str, str]] | None = None,
+        config_entry_id: str | None = None,
+    ) -> list[DeviceEntry]:
+        """Return every device matching the identifiers/connections (production API).
+
+        Mirrors ``DeviceRegistry.async_get_devices`` (HA 2026.8+) - the
+        non-deprecated, identifier-WIDE lookup used by ``account.py``. Unlike
+        ``async_get_device`` it returns a list (registry drift can leave several
+        devices with the same identifier across config entries);
+        ``config_entry_id`` narrows it to one owning entry.
+        """
+        matches = [
+            device
+            for device in self.devices.values()
+            if (
+                (not identifiers or set(identifiers) & device.identifiers)
+                and (not connections or set(connections) & device.connections)
+                and (
+                    config_entry_id is None
+                    or config_entry_id in device.config_entries
+                )
+            )
+        ]
+        return matches
+
+    def async_get_device_by_identifier(
+        self, identifier: tuple[str, str], config_entry_id: str
+    ) -> DeviceEntry | None:
+        """Return the device carrying `identifier`, owned by `config_entry_id`.
+
+        Mirrors ``DeviceRegistry.async_get_device_by_identifier`` (HA 2026.8+)
+        with its real, entry-SCOPED signature. Production deliberately uses the
+        identifier-wide ``async_get_devices`` instead, because the canonical
+        account device can still be owned by a legacy workspace entry - an
+        entry-scoped lookup would miss it. Kept for interface fidelity: a double
+        with the wrong signature would hide such a mistake.
+        """
+        matches = [
+            device
+            for device in self.devices.values()
+            if identifier in device.identifiers
+            and config_entry_id in device.config_entries
+        ]
+        if not matches:
+            return None
+        return min(matches, key=lambda device: str(device.id))
+
     def async_get(self, device_id: str) -> DeviceEntry | None:
         """Return the device with `device_id` (``None`` when absent)."""
         return self.devices.get(device_id)
@@ -646,6 +719,12 @@ class FakeDeviceRegistry:
         connections: set[tuple[str, str]] | None = None,
     ) -> DeviceEntry | None:
         """Find a device by identifier/connection subset, like the real lookup.
+
+        Test-comfort only: ``async_get_device`` is deprecated in HA (removed in
+        2027.8) and production code must never call it. It is kept because
+        existing tests exercise it directly, not because the integration needs
+        it. ``self.devices`` stays the internal store of this double - the
+        deprecation applies to production code, not to the fake.
 
         Kept positional-or-keyword on purpose: the integration calls it with
         keyword arguments, but real HA accepts both, and a stricter fake would

@@ -48,6 +48,7 @@ import ast
 import importlib.util
 import inspect
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -202,6 +203,57 @@ def test_no_deprecated_device_transfer_kwargs() -> None:
     # Positive control: the scan must actually see the allowed transfer call,
     # otherwise an empty/dysfunctional scan would pass vacuously.
     assert transfer_calls, "expected at least one new_config_entry_id= call site"
+
+
+def test_no_deprecated_device_registry_lookup() -> None:
+    """[HA 2027.8/2027.9] No deprecated device-registry access in the source.
+
+    Two registry access styles are deprecated and stop working in HA 2027.9:
+
+    - using the registry's ``devices`` collection as a MAPPING (subscript,
+      membership, ``.values()``, ``.get()``); enumerating it (iteration) stays
+      supported,
+    - the ``async_get_device`` lookup - replaced by ``async_get_devices``
+      (identifier-wide) and ``async_get_device_by_identifier`` (entry-scoped).
+
+    ``account.py`` reads the collection through ``account._device_entries``,
+    which deliberately uses ``getattr(..., "devices")`` instead of an attribute
+    access, so this guard must not forbid the attribute name itself - it forbids
+    the attribute *node* (``.devices``), which is what a mapping access would
+    look like in source.
+
+    The scan is AST-based, like the other source guards here: ``account.py``
+    explains both deprecations in docstrings, and a raw text grep would flag
+    those explanations. A regex belt for the exact access shapes the HA warning
+    names is asserted as well, plus a positive control so a broken scan cannot
+    pass vacuously.
+    """
+    mapping_reads: list[str] = []
+    deprecated_lookups: list[str] = []
+
+    for filename, tree in _parsed_sources().items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute):
+                continue
+            if node.attr == "devices":
+                mapping_reads.append(f"{filename}:{node.lineno} .devices")
+            elif node.attr == "async_get_device":
+                deprecated_lookups.append(f"{filename}:{node.lineno} async_get_device")
+
+    assert mapping_reads == [], (
+        "the devices collection must not be accessed as an attribute/mapping "
+        f"(HA 2027.9): {mapping_reads}"
+    )
+    assert deprecated_lookups == [], (
+        f"async_get_device is deprecated (HA 2027.8): {deprecated_lookups}"
+    )
+
+    account_source = (BASE / "account.py").read_text(encoding="utf-8")
+    assert not re.search(r"\bdev_reg\.devices\b", account_source)
+    assert ".devices.values(" not in account_source
+    # Positive control: the supported lookup must be present, otherwise the
+    # negative assertions above could pass on a source that resolves nothing.
+    assert "async_get_devices(" in account_source
 
 
 def test_account_coordinator_has_no_config_entry() -> None:

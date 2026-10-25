@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -1326,21 +1327,77 @@ def _sweep_entities(
     return candidate_device_ids
 
 
+def _device_entries(dev_reg: Any) -> list[Any]:
+    """Return every device entry of the registry - no mapping access.
+
+    The device registry changed shape in HA 2026.9: the ``devices`` collection
+    now yields ``DeviceEntry`` objects when iterated (the supported enumeration),
+    while using it as a mapping - subscript, membership, ``.values()``, ``.get()``
+    - is deprecated and stops working in HA 2027.9. Up to HA 2026.8 the same
+    attribute is still a plain ``Mapping`` whose iteration yields device *ids*;
+    there ``.values()`` is the only entry access and NOT deprecated.
+
+    The collection type separates both generations reliably (the deprecated
+    2026.9 view is not a ``Mapping``). Note that ``DeviceRegistry`` itself is
+    NOT iterable on either version, so ``for device in registry`` is not an
+    option.
+
+    A missing collection yields an empty list, never an exception: the real
+    ``DeviceRegistry`` only creates ``devices`` during ``_async_load()``, so the
+    attribute is simply absent on a not-yet-loaded registry (and on foreign
+    registry doubles). "No devices known" is the conservative truth in that
+    state, and every caller - including the unguarded ones in
+    :func:`_device_has_dependencies` and :func:`_move_account_device` - may rely
+    on getting a list back instead of having to catch ``AttributeError``.
+    """
+    devices = getattr(dev_reg, "devices", None)
+    if devices is None:
+        return []
+    if isinstance(devices, Mapping):
+        return list(devices.values())
+    return list(devices)
+
+
 def _canonical_device(dev_reg: Any) -> Any | None:
     """Return the device carrying ``(DOMAIN, ACCOUNT_DEVICE_IDENTIFIER)``.
 
-    ``DeviceRegistry.async_get_device`` is deprecated and removed in HA 2027.8,
-    so the device is resolved by iterating the registry instead. Identifiers are
-    stable for the canonical account device; should more than one device carry
-    the identifier (registry drift), the smallest ``id`` wins so the choice is
-    deterministic across runs. A registry without a usable ``devices`` mapping
-    or any lookup error is a normal "no device" state - never a setup failure.
+    Primary path is HA's own non-deprecated identifier lookup
+    ``DeviceRegistry.async_get_devices(identifiers={...})`` (available since HA
+    2026.8, i.e. the declared minimum). It replaces the two deprecated lookup
+    styles - ``async_get_device`` and treating the registry's ``devices``
+    attribute as a mapping - which stop working in HA 2027.9. Deliberately NOT
+    ``async_get_device_by_identifier``: that one is scoped to ONE owning config
+    entry (``identifier, config_entry_id``) and would miss the canonical device
+    while it is still owned by the legacy workspace entry.
+
+    Version fallback: without that helper the entries are enumerated through
+    :func:`_device_entries` and matched by identifier - the path supported by
+    older cores. Identifiers are stable for the canonical account device;
+    should more than one device carry the identifier (registry drift), the
+    smallest ``id`` wins so the choice is deterministic across runs. A registry
+    without a usable surface or any lookup error is a normal "no device" state -
+    never a setup failure.
     """
     identifier = (DOMAIN, ACCOUNT_DEVICE_IDENTIFIER)
+
+    lookup = getattr(dev_reg, "async_get_devices", None)
+    if callable(lookup):
+        try:
+            matches = list(lookup(identifiers={identifier}))
+        except (TypeError, AttributeError):
+            # Older core: no such lookup / different signature -> enumerate.
+            matches = None
+        except Exception:  # noqa: BLE001 - missing device is a normal state
+            return None
+        if matches is not None:
+            if not matches:
+                return None
+            return min(matches, key=lambda device: str(getattr(device, "id", "")))
+
     try:
         matches = [
             device
-            for device in dev_reg.devices.values()
+            for device in _device_entries(dev_reg)
             if identifier in getattr(device, "identifiers", set())
         ]
     except Exception:  # noqa: BLE001 - missing device is a normal state
@@ -1449,11 +1506,15 @@ def _device_has_dependencies(ent_reg: Any, dev_reg: Any, device_id: str) -> bool
     Checked against ALL entities (disabled ones included): a disabled collision
     loser still points at its old device, and removing that device would orphan
     it. ``via_device_id`` covers HA >= 2026.9 child devices (plan §3.3 step 3b).
+
+    The child scan goes through :func:`_device_entries`, which enumerates the
+    registry without the deprecated mapping access (see there) - the supported
+    path that keeps working after 2027.9.
     """
     for candidate in ent_reg.entities.values():
         if getattr(candidate, "device_id", None) == device_id:
             return True
-    for child in dev_reg.devices.values():
+    for child in _device_entries(dev_reg):
         if getattr(child, "via_device_id", None) == device_id:
             return True
     return False
@@ -1584,13 +1645,18 @@ def _move_account_device(
     ``new_config_entry_id`` replaces the whole ownership set. An HA version
     without that keyword raises ``TypeError``; the guard then raises a repair
     issue and keeps the integration running (plan §11.1 R1) - it never raises.
+
+    The fallback survivors are enumerated through :func:`_device_entries`,
+    which never uses the deprecated mapping access on the registry's ``devices``
+    collection (removed in HA 2027.9). Filtering and the deterministic
+    best-rank sort are unchanged.
     """
     target = _canonical_device(dev_reg)
     if target is None:
         excluded_identifiers = _workspace_device_identifiers(hass, entry)
         allowed_owner_ids = _go_gauge_entry_ids(hass, entry)
         survivors = []
-        for device in dev_reg.devices.values():
+        for device in _device_entries(dev_reg):
             device_id = getattr(device, "id", None)
             if device_id not in candidate_device_ids:
                 continue

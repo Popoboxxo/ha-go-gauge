@@ -1062,24 +1062,69 @@ def test_canonical_blocker_uses_ha_lookup_signature(registries):
     assert blocker is holder
 
 
-def test_no_deprecated_device_lookup():
-    """[HA 2027.8] ``async_get_device`` is gone - resolve via ``devices``.
+def test_canonical_device_uses_registry_identifier_lookup():
+    """[HA 2026.8+] The primary path is ``async_get_devices(identifiers=...)``.
 
-    The registry double deliberately raises on any attribute access other than
-    ``devices``, so a leftover ``async_get_device`` call cannot pass unseen.
-    Two identifier matches resolve deterministically (smallest ``id``).
+    The spy pins the contract: exactly one call with the identifier set
+    ``{(DOMAIN, ACCOUNT_DEVICE_IDENTIFIER)}`` and the returned entries are
+    ranked deterministically (smallest ``id``). This is HA's non-deprecated
+    identifier lookup - the replacement for ``async_get_device`` and for using
+    the registry's ``devices`` mapping as a lookup table.
     """
+    identifier = (const.DOMAIN, const.ACCOUNT_DEVICE_IDENTIFIER)
+    calls: list[set[tuple[str, str]]] = []
+    devices = [
+        conftest.DeviceEntry(id="zzz", identifiers={identifier}),
+        conftest.DeviceEntry(id="aaa", identifiers={identifier}),
+    ]
 
-    class _DevicesOnly:
-        """``DeviceRegistry`` surface reduced to the supported iteration."""
+    class _SpyRegistry:
+        """Registry double whose only surface is the identifier lookup."""
 
-        def __init__(self, devices: dict[str, Any]) -> None:
+        def async_get_devices(
+            self, *, identifiers: set[tuple[str, str]] | None = None
+        ) -> list[conftest.DeviceEntry]:
+            calls.append(set(identifiers or set()))
+            return devices
+
+        def __getattr__(self, name: str):
+            raise AssertionError(f"unexpected registry access: {name}")
+
+    found = account._canonical_device(_SpyRegistry())
+
+    assert found is not None
+    assert found.id == "aaa", "the smallest id must win deterministically"
+    assert calls == [{identifier}], "lookup must be called exactly once"
+
+    # An empty lookup result means "no canonical device" - not an error.
+    class _EmptyRegistry(_SpyRegistry):
+        def async_get_devices(self, *, identifiers=None):
+            return []
+
+    assert account._canonical_device(_EmptyRegistry()) is None
+
+
+def test_canonical_device_falls_back_to_registry_entries():
+    """[HA < 2026.8] Without the lookup the entities are enumerated.
+
+    Old cores only expose the ``devices`` mapping; the entries are read through
+    the production helper ``_device_entries`` (2026.8 mapping generation), so
+    neither ``async_get_device`` nor a deprecated mapping access is needed. Two
+    identifier matches resolve deterministically (smallest ``id``).
+    """
+    identifier = (const.DOMAIN, const.ACCOUNT_DEVICE_IDENTIFIER)
+
+    class _LegacyMappingRegistry:
+        """HA 2026.8 surface: plain mapping, no ``async_get_devices``."""
+
+        def __init__(self, devices: dict[str, conftest.DeviceEntry]) -> None:
             self.devices = devices
 
         def __getattr__(self, name: str):
+            if name == "async_get_devices":
+                raise AttributeError(name)  # absent on an old core
             raise AssertionError(f"deprecated/unsupported access: {name}")
 
-    identifier = (const.DOMAIN, const.ACCOUNT_DEVICE_IDENTIFIER)
     devices = {
         "zzz": conftest.DeviceEntry(id="zzz", identifiers={identifier}),
         "aaa": conftest.DeviceEntry(id="aaa", identifiers={identifier}),
@@ -1088,13 +1133,217 @@ def test_no_deprecated_device_lookup():
         ),
     }
 
-    found = account._canonical_device(_DevicesOnly(devices))
+    found = account._canonical_device(_LegacyMappingRegistry(devices))
 
     assert found is not None
     assert found.id == "aaa", "the smallest id must win deterministically"
-    assert account._canonical_device(_DevicesOnly({})) is None
+    assert account._canonical_device(_LegacyMappingRegistry({})) is None
     # A registry without the expected surface stays a normal "no device".
     assert account._canonical_device(object()) is None
+
+
+def test_canonical_device_falls_back_on_older_signature():
+    """[HA < 2026.8] A lookup with a different signature still resolves.
+
+    Signature drift surfaces as ``TypeError``; the identifier match then runs
+    over the enumerated entries instead of returning ``None``.
+    """
+    identifier = (const.DOMAIN, const.ACCOUNT_DEVICE_IDENTIFIER)
+    device = conftest.DeviceEntry(
+        id=CANONICAL_DEVICE_ID, identifiers={identifier}
+    )
+
+    class _WrongSignatureRegistry:
+        """Lookup exists but takes no keyword arguments -> ``TypeError``."""
+
+        def __init__(self) -> None:
+            self.devices = {device.id: device}
+
+        def async_get_devices(self):  # signature probe
+            raise AssertionError("must not be callable with identifiers=")
+
+        def __getattr__(self, name: str):
+            raise AssertionError(f"deprecated/unsupported access: {name}")
+
+    assert account._canonical_device(_WrongSignatureRegistry()) is device
+
+
+def test_device_registry_without_collection_reads_as_empty():
+    """[HA 2026.9] A registry without a loaded ``devices`` collection is empty.
+
+    ``DeviceRegistry.devices`` only comes into existence during
+    ``_async_load()``; before that - and on foreign registry doubles - the
+    attribute is simply absent. That pre-load state must read as "no devices
+    known": ``_device_entries`` returns an empty list instead of raising
+    ``AttributeError``, so the UNGUARDED callers (``_device_has_dependencies``,
+    the survivor scan in ``_move_account_device``) can never abort an adoption
+    mid-run. On a loaded registry the behaviour is unchanged.
+    """
+
+    class _PreLoadRegistry:
+        """Pre-load registry: every missing attribute raises, like HA."""
+
+        def __getattr__(self, name: str):
+            raise AttributeError(name)
+
+    class _EmptyEntityRegistry:
+        """Entity registry double with no entities (no dependency)."""
+
+        entities: dict[str, Any] = {}
+
+    registry = _PreLoadRegistry()
+
+    assert account._device_entries(registry) == []
+    assert account._canonical_device(registry) is None
+    assert (
+        account._device_has_dependencies(
+            _EmptyEntityRegistry(), registry, "dev-x"
+        )
+        is False
+    )
+
+
+def test_device_has_dependencies_covers_child_devices(registries):
+    """[PLAN2-R5] A child device (``via_device_id``) counts as a dependency.
+
+    Both blockers keep a duplicate device alive: entities and child devices.
+    The child scan must not need the deprecated ``devices`` mapping, and a device
+    with neither stays removable (``False`` + no ``async_remove_device`` call).
+    """
+    registries.device.add(conftest.DeviceEntry(id="dev-parent"))
+    registries.device.add(
+        conftest.DeviceEntry(id="dev-child", via_device_id="dev-parent")
+    )
+
+    assert account._device_has_dependencies(
+        registries.entity, registries.device, "dev-parent"
+    ) is True
+    assert account._device_has_dependencies(
+        registries.entity, registries.device, "dev-child"
+    ) is False
+    assert registries.device.remove_calls == []
+
+
+class _StrictDevicesCollection:
+    """HA 2026.9+ device collection: iteration yes, mapping access no.
+
+    On a real HA >= 2026.9 the registry's ``devices`` attribute is a view whose
+    iteration yields ``DeviceEntry`` objects (the supported enumeration) while
+    every mapping access - ``.values()``, ``[...]``, ``.get()`` - reports the
+    deprecation (removed in 2027.9). The double mirrors exactly that: iteration
+    works, any other attribute/method access fails loudly.
+    """
+
+    def __init__(self, inner: conftest.FakeDeviceRegistry) -> None:
+        self._inner = inner
+
+    def __iter__(self):
+        return iter(self._inner.devices.values())
+
+    def __len__(self) -> int:
+        return len(self._inner.devices)
+
+    def __getattr__(self, name: str) -> Any:
+        raise AssertionError(
+            "deprecated mapping access on the devices collection "
+            f"(removed in HA 2027.9): {name}"
+        )
+
+
+class _StrictDeviceRegistry:
+    """``FakeDeviceRegistry`` wrapper that forbids the deprecated mapping access.
+
+    ``devices`` hands out the 2026.9 collection double (iteration only), so a
+    reintroduced ``dev_reg.devices.values()`` fails loudly instead of passing
+    silently. Every other attribute (``async_get``, ``async_get_devices``,
+    ``async_update_device``, ...) is delegated to the inner fake.
+    """
+
+    def __init__(self, inner: conftest.FakeDeviceRegistry) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "devices":
+            return _StrictDevicesCollection(self._inner)
+        return getattr(self._inner, name)
+
+
+@pytest.mark.asyncio
+async def test_production_never_reads_the_deprecated_devices_mapping(
+    hass, registries
+):
+    """[HA 2027.9] Canonical lookup, child check and device fallback stay clean.
+
+    The strict double models HA 2026.9: the registry's ``devices`` attribute is
+    iterable (supported) but every mapping method raises ``AssertionError``. The
+    direct calls therefore fail loudly on a reintroduced mapping access; in the
+    end-to-end adoption the same access would surface in ``report.errors`` (the
+    adoption never raises), so both are asserted. A device with a child covers
+    ``_device_has_dependencies``, the fallback sub-scenario covers
+    ``_move_account_device``'s survivor scan.
+    """
+    hass.config_entries.async_entries = MagicMock(
+        return_value=[_workspace_entry(), _entry()]
+    )
+    _seed_account_device(registries)
+    registries.device.add(
+        conftest.DeviceEntry(
+            id="dev-duplicate",
+            name="Go Gauge (alt)",
+            config_entries={OWNER_ENTRY_ID},
+        )
+    )
+    registries.device.add(
+        conftest.DeviceEntry(id="dev-child", via_device_id="dev-duplicate")
+    )
+    _seed_legacy(registries, device_ids={"model_catalog": "dev-duplicate"})
+
+    strict = _StrictDeviceRegistry(registries.device)
+
+    # 1. primary lookup path
+    canonical = account._canonical_device(strict)
+    assert canonical is not None
+    assert canonical.id == CANONICAL_DEVICE_ID
+
+    # 2. child-device check (enumeration through the devices collection)
+    assert account._device_has_dependencies(
+        registries.entity, strict, "dev-duplicate"
+    ) is True
+
+    # 3. end-to-end: the non-empty duplicate stays, nothing failed
+    conftest.install_device_registry_stub(strict)  # type: ignore[arg-type]
+    account.dr = sys.modules["homeassistant.helpers.device_registry"]
+
+    report = await account.async_adopt_account_entities(hass, _entry())
+
+    # A mapping access inside the adoption surfaces as "adoption: deprecated
+    # ..." (the adoption never raises) - that would fail here.
+    assert report.errors == ["device dev-duplicate: not empty - left in place"]
+    assert report.merged_devices == []
+    assert report.device_moved == CANONICAL_DEVICE_ID
+    assert registries.device.remove_calls == []
+    assert "dev-duplicate" in registries.device.devices
+    assert "account_device_not_empty" in registries.issue.issues
+
+    # 4. fallback survivor enumeration of _move_account_device (no canonical
+    #    device in this registry, so the fallback branch is taken)
+    inner = conftest.FakeDeviceRegistry(registries.entity)
+    inner.add(
+        conftest.DeviceEntry(id="dev-legacy", config_entries={OWNER_ENTRY_ID})
+    )
+    fallback_report = account.AdoptionReport()
+
+    account._move_account_device(
+        hass,
+        _entry(),
+        fallback_report,
+        _StrictDeviceRegistry(inner),
+        {"dev-legacy"},
+    )
+
+    assert fallback_report.device_moved == "dev-legacy"
+    assert fallback_report.errors == []
+    assert inner.async_get("dev-legacy").config_entries == {ACCOUNT_ENTRY_ID}
 
 
 if __name__ == "__main__":
