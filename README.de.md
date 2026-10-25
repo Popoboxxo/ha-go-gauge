@@ -243,6 +243,29 @@ prüfen (Default: Auto-Refresh **ON**, Katalog-Intervall **60 min**); die frühe
 Workspace-Modell-Regler (`auto_update_models`, `models_refresh_minutes`) entfallen
 ersatzlos. Voraussetzung ist Home Assistant **2026.8.0** oder neuer.
 
+## Entitätsnamen und Entity-IDs
+
+Kanonische Entitätsnamen, Translation-Keys und `unique_id`s sind englisch; die
+Anzeigenamen lokalisiert Home Assistant zur Laufzeit. Die `entity_id` selbst entsteht
+**einmalig** bei der Erst-Registrierung — aus dem zu diesem Zeitpunkt lokalisierten Namen
+plus dem Gerätenamen. Danach ändert Home Assistant sie **nicht** automatisch: weder bei
+einer Änderung des Anzeigenamens noch bei einem Wechsel der Systemsprache.
+
+`entity_id`s können sich deshalb zwischen Installationen unterscheiden (Systemsprache,
+Gerätename, Historie). Die in diesem README gezeigten IDs sind Beispiele — nutze die IDs
+deiner eigenen Installation und verlasse dich in Automationen nicht auf Beispiel-Slugs.
+Verbindliche Identität ist die `unique_id`. Ein manuelles Umbenennen der `entity_id` ist in
+den Entitätseinstellungen möglich, bricht aber Automationen und Dashboards und ist keine
+automatische Aktion dieser Integration.
+
+Das Konto-Gerät heißt bewusst „Go Gauge Konto"; daher tragen die Konto-Entity-IDs das
+Präfix `go_gauge_konto` (z. B. `binary_sensor.go_gauge_konto_api_erreichbar`).
+Workspace-Gerätenamen vergibst du selbst, ihre Präfixe variieren entsprechend.
+
+Hintergrund: [die Entity-Registry](https://developers.home-assistant.io/docs/entity_registry_index/)
+in den Home-Assistant-Entwicklerdocs — wie die Registry die `entity_id` speichert und
+warum die `unique_id` unveränderlich sein muss.
+
 ## Beispiel-Automation
 
 ```yaml

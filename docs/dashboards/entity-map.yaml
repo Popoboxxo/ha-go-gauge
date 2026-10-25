@@ -1,9 +1,11 @@
 # Go Gauge - maschinenlesbare Entity-Map (Dashboard-Bindung).
 #
 # Zweck: Sie beschreibt, welche Entities die Integration anlegt und wie eine
-# dashboard-erzeugende KI die STABILE Bindung herstellt. entity_id ist NICHT
-# stabil (HA slugifiziert den Friendly Name inkl. Workspace-Name und
-# Systemsprache). Stabil ist ausschliesslich der unique_id-Suffix.
+# dashboard-erzeugende KI die STABILE Bindung herstellt. Die entity_id bildet HA
+# einmalig beim ersten Registrieren aus dem damals lokalisierten Namen und dem
+# Geraetenamen; danach aendert sie sich nicht automatisch (auch nicht bei
+# Umbenennung oder Sprachwechsel) und kann zwischen Installationen abweichen.
+# Stabil ist ausschliesslich der unique_id-Suffix.
 #
 # Bindungsregel: Entities zur Laufzeit ueber die HA Entity-Registry aufloesen
 # und ueber unique_id_template / unique_id_suffix matchen. NIEMALS entity_ids

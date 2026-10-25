@@ -94,11 +94,15 @@ erhöhen:
 
 ## 4. Platzhalter- und Bindungskonzept
 
-**`entity_id` ist NICHT stabil.** Home Assistant bildet die `entity_id` aus
-dem *Friendly Name* — und der enthält den Workspace-Namen sowie ggf. die
-Systemsprache. Ändert sich Name oder Sprache, ändert sich die `entity_id`.
-Automatisierungen und Dashboards dürfen sich deshalb nicht auf die `entity_id`
-verlassen.
+**Die `entity_id` entsteht einmalig bei der Erst-Registrierung.** Home Assistant bildet
+sie zu diesem Zeitpunkt aus dem damals lokalisierten Namen plus dem Gerätenamen und
+speichert sie in der Entity-Registry. Danach ändert HA sie **nicht** automatisch — weder
+bei einer späteren Umbenennung des Anzeigenamens noch bei einem Sprachwechsel. Zwischen
+Installationen kann sie deshalb abweichen (Systemsprache, Gerätename, Historie).
+Verbindliche Identität ist die `unique_id`; ein manuelles Umbenennen der `entity_id` ist
+möglich, bricht aber Automationen und Dashboards. Siehe
+[Entitätsnamen und Entity-IDs](../../README.de.md#entitätsnamen-und-entity-ids) im
+Haupt-README.
 
 **Stabil ist der `unique_id`-Suffix.** Jede Entity trägt eine `unique_id`
 nach dem Muster `{entry_id}_{workspace_key}_{window}{suffix}` (fensterspezifisch)
