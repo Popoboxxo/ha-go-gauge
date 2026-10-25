@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.1] — 2026-10-25
+
+### 📝 Documentation
+
+- Correct the 2.0.0 verification notes: Canon v1.6.0 is pinned and passes
+  with 0 errors / 0 warnings, and the HA 2026.8.0 minimum-version E2E passed.
+  No functional changes.
+
 ## [2.0.0] — 2026-10-25
 
 ### Summary
@@ -100,13 +108,12 @@ Aus dem Live-E2E vor dem Release behoben:
 - **638 Tests grün**; `ruff check custom_components tests scripts` sauber;
   `mypy` sauber; `python3 scripts/check_json_consistency.py` grün;
   `compileall` sauber; `manual_offline_smoke` grün.
-- **Canon-Check v1.4.0** (`check_canon.py` aus
+- **Canon-Check v1.6.0** (`check_canon.py` aus
   `external/ha-gauge-standard`): `0 error(s), 0 warning(s)` gegen dieses Repo —
-  Canon v1.4.0 ist gepinnt und nutzbar.
-  Hinweis: Canon v1.4.0 ist inhaltlich noch auf dem Stand von go_gauge 1.6.0
-  (kein `account_entry`-Flag, `api_reachable` noch `last_update_success`-basiert,
-  „Refresh beider Zyklen") — Nachzug ist ein Canon-v1.5-Kandidat im
-  Submodul-Repo, kein Parent-Change.
+  Canon v1.6.0 ist gepinnt und nutzbar (Submodul auf `4de3cda`/v1.6.0,
+  Parent-Pin `b26bc18`). Canon v1.6.0 deckt den `account_entry`-Contract ab; der
+  frühere Nachzug-Kandidat ist damit erledigt.
+  Release: https://github.com/Popoboxxo/ha-gauge-standard/releases/tag/v1.6.0
 - **Live-E2E auf `/home/hermes/ha-test` (HA 2026.9.1) — PASS.** Vier Läufe: Lauf 1
   legte die `RegistryEntry`-Semantik-Bugs offen (Adoption ein No-op, drohender Verlust
   der 5 Alt-Entities, Alt-Settings wurden nie entfernt), Lauf 2 bestätigte die
@@ -124,10 +131,17 @@ Aus dem Live-E2E vor dem Release behoben:
   und Config-Registry byte-identisch (md5), 39 aktiv / 2 deleted / 2 Devices / 2 Entries
   / 243 States vor == nach. Protokoll:
   `docs/E2E-v8-account-split-2026-10-25.md`.
-- **Offen (pending):** Lauf im HA-2026.8.0-Container — der E2E-PASS gilt ausschließlich
-  für HA 2026.9.1, die Mindestversion 2026.8.0 bleibt damit unbelegt. Ebenfalls
-  ausstehend: Canon-v1.5-Nachzug im Submodul-Repo, Release-Dreiklang
-  (Tag/Push/GitHub-Release) und der HACS-Update-Test.
+- **HA-2026.8.0-Mindestversion — PASS.** Frischer Container, v7-Backup
+  restauriert, go_gauge 2.0.0 geladen: 2 Config-Entries (`v8`), die fünf
+  Alt-Entities behalten ihre `entity_id` und wechseln auf `account_*`,
+  Alt-Settings entfernt, Katalog 45 / Live 38 / `api_reachable` on, Workspace
+  `api_status` `auth_error`, Settings und Button funktionsfähig, zweiter Lauf
+  idempotent — keine Fehler, keine Deprecations.
+- **Release v2.0.0 veröffentlicht** (Tag `v2.0.0` ↔ `manifest.version` 2.0.0).
+- **Offen (pending): HACS-Update-Test.** HACS ist auf `/home/hermes/ha-test`
+  nicht installiert und wird nicht unilateral nachinstalliert; der Update-Test
+  1.7.0 → 2.0.0 steht daher noch aus. Der Alt-Entity-Cleanup läuft erst nach
+  diesem HACS-Update-Test.
 
 ### 💥 Breaking Changes
 
