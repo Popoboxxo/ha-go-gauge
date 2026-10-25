@@ -131,15 +131,15 @@ def test_entry_kind_constants_are_consistent() -> None:
 # --- 2.0.0 release metadata (plan §9.1) ------------------------------------
 
 
-def test_manifest_version_is_2_0_0() -> None:
-    """[PLAN2-M4] The released manifest version is the bare SemVer ``2.0.0``.
+def test_manifest_version_is_2_0_1() -> None:
+    """[PLAN2-M4] The released manifest version is the bare SemVer ``2.0.1``.
 
-    The tag counterpart (``v2.0.0``) is covered by
+    The tag counterpart (``v2.0.1``) is covered by
     :func:`test_version_sync_tag_matches_manifest`; no ``v`` prefix may leak
     into ``manifest.version`` (HACS/hassfest reject it).
     """
     manifest = json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))
-    assert manifest["version"] == "2.0.0"
+    assert manifest["version"] == "2.0.1"
 
 
 def test_declared_min_version_consistent() -> None:
@@ -305,7 +305,7 @@ def test_account_coordinator_has_no_config_entry() -> None:
 
 
 def test_version_sync_tag_matches_manifest(monkeypatch) -> None:
-    """[PLAN2-M4] Real manifest + tag ``v2.0.0`` pass ``check_version_sync``.
+    """[PLAN2-M4] Real manifest + tag ``v2.0.1`` pass ``check_version_sync``.
 
     Forward test of the release rule (plan §8.4/§8.5) against the *real*
     ``custom_components/go_gauge/manifest.json``: the release tag must match
@@ -323,7 +323,7 @@ def test_version_sync_tag_matches_manifest(monkeypatch) -> None:
     monkeypatch.setattr(version_sync, "MANIFEST_FILE", MANIFEST_FILE)
     monkeypatch.setenv("EVENT_NAME", "release")
 
-    monkeypatch.setenv("TAG_NAME", "v2.0.0")
+    monkeypatch.setenv("TAG_NAME", "v2.0.1")
     assert version_sync.main() == 0
 
     # Counter-check: a stale tag must fail, otherwise the guard proves nothing.
