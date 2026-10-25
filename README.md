@@ -36,9 +36,10 @@ Zusatzkomponente. Nur dein Workspace-API-Token.
   `unknown`, wenn die API zwar antwortet, aber keinen Erfolg belegt (z. B. 401 oder kein Abo).
   „Frisch" heißt innerhalb der TTL: Katalog 2× Konto-Intervall (Fallback 120 min bei
   Auto-Refresh aus), Nutzung 3× Workspace-Intervall.
-- 🔘 **Zwei Refresh-Buttons**: der Workspace-Button „Refresh" lädt **nur die Nutzung**,
-  der Konto-Button auf dem Konto-Gerät lädt **nur den Modell-Katalog** — beide unabhängig
-  von den Auto-Zyklen.
+- 🔘 **Zwei Refresh-Buttons**: der Workspace-Button und der Konto-Button teilen den
+  Translation-Key `refresh` und werden nur über ihr Gerät unterschieden — der
+  Workspace-Button lädt **nur die Nutzung**, der Button auf dem Gerät „Go Gauge Konto"
+  lädt **nur den Modell-Katalog**. Beide unabhängig von den Auto-Zyklen.
 - ⚙️ **Getrennte Auto-Update-Zyklen**, live umschaltbar über eigene Switch-/Number-Entities
   (kein Neustart/Reload nötig) **oder** über die Optionen:
   | Zyklus | Ebene | Ein/Aus | Default |
@@ -159,13 +160,15 @@ Konto-Gerät; bei einem Upgrade behalten bestehende Installationen ihre bisherig
 | `sensor.go_gauge_cheapest_model` | **Konto-Device** — z. B. `muse-spark-1.2-contributor` (unique_id `account_cheapest_model`) |
 | `sensor.go_gauge_free_models` | **Konto-Device** — `ox-alpha-free` (unique_id `account_free_models`) |
 | `binary_sensor.go_gauge_api_reachable` | **Konto-Device** — Evidenz-/TTL-basiert (ON nur bei frischem Erfolg, `unknown` ohne Erfolgsbeleg). Attribute: `reachability_reason`, `evidence`, `models_ttl_s`, `usage_ttl_s`, `checked_at` (unique_id `account_api_reachable`) |
-| `button.go_gauge_konto_refresh` | **Konto-Device** — lädt **nur den Modell-Katalog** (unique_id `account_refresh`) |
+| `button.go_gauge_konto_refresh` | **Konto-Device** — lädt **nur den Modell-Katalog** (Translation-Key `refresh`, `unique_id` `account_refresh`) |
 | `switch.go_gauge_konto_auto_update_models` | **Konto-Device** — globaler Katalog-Auto-Refresh, Default **ON** (unique_id `account_auto_update_models`) |
 | `number.go_gauge_konto_models_refresh_min` | **Konto-Device** — Katalog-Intervall **1–1440 min**, Default **60** (unique_id `account_models_refresh_minutes`) |
 
 Die konkreten `entity_id`s der Konto-Entities sind illustrativ (Device-Prefix und
-Systemsprache können abweichen); verbindlich ist die `unique_id`. Bestehende
-Installationen behalten ihre `entity_id` auch nach dem Upgrade auf 2.0.0.
+Systemsprache können abweichen); verbindlich ist die `unique_id`. Beide
+Refresh-Buttons nutzen den Translation-Key `refresh` — die Zuordnung erfolgt über
+das Gerät („Go Gauge Konto" vs. „Go Gauge <Workspace>"), nicht über den Key.
+Bestehende Installationen behalten ihre `entity_id` auch nach dem Upgrade auf 2.0.0.
 
 ### Update von 1.x
 

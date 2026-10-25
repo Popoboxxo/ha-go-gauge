@@ -889,15 +889,70 @@ async def test_device_move_without_candidates(hass, registries):
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_transfer_typeerror_creates_issue_and_setup_stays_true(
+async def test_sweep_error_blocks_every_device_write(hass, registries):
+    """[REVIEW-M1] A failed entity write stops the pass BEFORE any device write.
+
+    Ordering invariant: handing the account device over while an entity still
+    carries the old ``config_entry_id`` makes HA delete that entity (the
+    E2E-B1 cascade). So one sweep error must leave ``merged_devices`` empty,
+    ``device_moved`` ``None`` and ``removed_settings`` ``0`` - no device merge,
+    no hand-over, no legacy-setting removal - and the next run retries.
+    """
+    registries.entity.raise_on_update = ValueError("registry write rejected")
+    _seed_account_device(registries)
+    duplicate = conftest.DeviceEntry(
+        id="dev-dup",
+        name="Legacy duplicate",
+        identifiers={(const.DOMAIN, "legacy-duplicate")},
+        config_entries={OWNER_ENTRY_ID},
+    )
+    registries.device.add(duplicate)
+    # One candidate points at the duplicate device: without the guard the
+    # merge would remove it.
+    created = _seed_legacy(
+        registries, device_ids={"model_catalog": duplicate.id}
+    )
+    settings = {}
+    for suffix, entity_domain in (
+        ("_auto_update_models", "switch"),
+        ("_models_refresh_minutes", "number"),
+    ):
+        settings[suffix] = registries.entity.add(
+            conftest.RegistryEntry(
+                entity_id=f"{entity_domain}.ws{suffix}",
+                unique_id=f"{OWNER_ENTRY_ID}{suffix}",
+                platform=const.DOMAIN,
+                domain=entity_domain,
+                config_entry_id=OWNER_ENTRY_ID,
+            )
+        )
+    entry = _entry()
+
+    report = await account.async_adopt_account_entities(hass, entry)
+
+    assert len(report.errors) == len(account_logic.ACCOUNT_ENTITY_KINDS)
+    assert report.device_moved is None
+    assert report.merged_devices == []
+    assert report.removed_settings == 0
+    assert registries.device.update_calls == []
+    assert registries.device.remove_calls == []
+    # No entity was removed either - not even the legacy model settings.
+    assert registries.entity.remove_calls == []
+    for entity in (*created.values(), *settings.values()):
+        assert entity.entity_id in registries.entity.entities
+
+
+@pytest.mark.asyncio
+async def test_transfer_typeerror_creates_issue_and_setup_retries(
     hass, registries, monkeypatch
 ):
-    """[PLAN2-R1] An HA version without ``new_config_entry_id`` only raises a repair.
+    """[PLAN2-R1][REVIEW-M1] An HA without ``new_config_entry_id`` raises a repair.
 
     Plan §11.1 R1: ``TypeError`` from ``async_update_device`` must be turned into
-    ``adoption_unsupported`` + a report error, and the setup must still return
-    ``True`` - the account runtime keeps working, the entities simply stay with
-    their old device owner until HA is updated.
+    ``adoption_unsupported`` + a report error, never into an exception. Since
+    review fix M1 the setup evaluates that report, so the setup now returns
+    ``False`` (``SETUP_RETRY``, HA retries with backoff) instead of ``True`` -
+    the issue still names the cause and the next start retries idempotently.
     """
     _install_client(monkeypatch)
     _seed_account_device(registries)
@@ -908,25 +963,30 @@ async def test_transfer_typeerror_creates_issue_and_setup_stays_true(
     )
     entry = _entry()
 
-    result = await account.async_setup_account_entry(hass, entry)
+    report = await account.async_adopt_account_entities(hass, entry)
 
-    report = hass.data[const.DOMAIN][const.DATA_ADOPTION_REPORT]
-    assert result is True
     assert report.errors
     assert report.device_moved is None
     issue = registries.issue.issues["adoption_unsupported"]
     assert issue["translation_placeholders"]["error"]
     assert "new_config_entry_id" in issue["translation_placeholders"]["error"]
 
+    result = await account.async_setup_account_entry(hass, entry)
+
+    assert result is False
+    hass.config_entries.async_forward_entry_setups.assert_not_awaited()
+    assert entry.entry_id not in hass.data[const.DOMAIN]
+    assert const.DATA_ACCOUNT_KEY not in hass.data[const.DOMAIN]
+    assert const.DATA_ADOPTION_REPORT not in hass.data[const.DOMAIN]
+
 
 @pytest.mark.asyncio
 async def test_value_error_from_update_entity_goes_to_errors(hass, registries):
-    """[PLAN2-R6] A rejected entity write is collected, the sweep continues.
+    """[PLAN2-R6][REVIEW-M1] A rejected entity write is collected, then stops.
 
-    Plan §4.6: every entity is guarded individually, so one failing
-    ``new_unique_id`` write neither aborts the pass nor the other kinds. The
-    account setup itself is not involved here - the pure adoption API must not
-    raise either.
+    Plan §4.6: every entity is guarded individually, so one failing write neither
+    aborts the pass nor the other kinds. Review fix M1 additionally forbids any
+    device work after such an error - the pass ends with the sweep.
     """
     _seed_account_device(registries)
     _seed_legacy(registries)
@@ -940,8 +1000,11 @@ async def test_value_error_from_update_entity_goes_to_errors(hass, registries):
         assert any(error.startswith(f"{kind}:") for error in report.errors)
     assert report.renamed == []
     assert hass.data[const.DOMAIN][const.DATA_ADOPTION_REPORT] is report
-    # The device hand-over is independent of the entity writes and still works.
-    assert report.device_moved == CANONICAL_DEVICE_ID
+    # Review fix M1: the device phases are gated on a clean sweep.
+    assert report.device_moved is None
+    assert report.merged_devices == []
+    assert report.removed_settings == 0
+    assert registries.device.update_calls == []
 
 
 @pytest.mark.asyncio
@@ -950,10 +1013,12 @@ async def test_adoption_is_wired_into_setup(hass, registries, monkeypatch):
 
     Plan §3.3: the registry work must run inside the account setup (before the
     phase-C forward). Plan §2.4/M5: even a raising adoption is swallowed - setup
-    stays ``True`` so the workspaces can never be taken down by it.
+    stays ``True`` so the workspaces can never be taken down by it (review fix
+    M1 only reacts to a REPORT with errors, not to a raised exception, which the
+    adoption itself already converts into a report).
     """
     _install_client(monkeypatch)
-    spy = AsyncMock()
+    spy = AsyncMock(return_value=account.AdoptionReport())
     monkeypatch.setattr(account, "async_adopt_account_entities", spy)
     entry = _entry()
 

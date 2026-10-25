@@ -888,6 +888,17 @@ existieren: bis Schritt 14 kommen sie weiterhin vom Workspace-Owner, danach auss
   `async_update_device(new_config_entry_id=...)` verschieben; Duplikat-Devices nur entfernen, wenn leer.
 - **HA-Mindestversion 2026.8.0 festgelegt** (ehemalige offene Annahme aufgelöst, Guard bleibt).
 
+**Abweichungen bei der Umsetzung:**
+- **Konto-Button-Key `refresh` statt `refresh_account`** — Canon v1.4.0 kennt nur `refresh`;
+  Workspace- und Konto-Button unterscheiden sich über das Device, `unique_id` bleibt
+  `account_refresh`.
+- **Konto-Options werden beim ersten Setup einmalig aus der ersten Workspace-Entry
+  übernommen** (Nutzerentscheidung „Migration ohne Datenverlust", abweichend von §4.7).
+- **`account.py`-Aufteilung** (Konto-Entry, Reachability, Settings in eigene Module) ist als
+  2.1.0-Follow-up vertagt, nicht Teil von 2.0.0.
+- **Adoptions-Teilfehler ⇒ kein Device-Move/Forward**, Setup liefert `False`/`SETUP_RETRY`
+  (Datenverlust-Schutz statt Teil-Migration).
+
 **Review-Historie:** Plan v1 → `CHANGES_REQUESTED` (5 Blocker, 8 Major) → Plan v2 → Finalentscheidungen E1–E9
 (dieses Dokument).
 

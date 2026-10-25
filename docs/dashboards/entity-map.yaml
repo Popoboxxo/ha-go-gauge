@@ -199,8 +199,8 @@ entities:
     unique_id_template: "{entry_id}_refresh"
     name_pattern: "Go Gauge Refresh"
     window_specific: false
-    note: "Laedt NUR Usage (setzt last_usage_fetch zurueck); der Katalog-Refresh ist der Konto-Button account_refresh."
-    source: "button.py:45-64"
+    note: "Laedt NUR Usage (setzt last_usage_fetch zurueck); der Katalog-Refresh ist der Konto-Button account_refresh. Beide Buttons teilen den Translation-Key `refresh`."
+    source: "button.py:49-68"
 
   # --- Konto-Ebene (workspace-unabhaengig, Konto-Entry) ----------------------
   # Alle Eintraege gehoeren der automatisch angelegten Konto-Entry
@@ -271,11 +271,11 @@ entities:
     device: account
     unique_id_suffix: "account_refresh"
     unique_id_template: "account_refresh"
-    name_pattern: "Refresh account"
+    name_pattern: "Refresh"
     window_specific: false
     account_entry: true
-    note: "Laedt NUR den Modell-Katalog (AccountCoordinator.async_fetch_now); loest keinen Usage-Fetch aus."
-    source: "button.py:67-79"
+    note: "Laedt NUR den Modell-Katalog (AccountCoordinator.async_fetch_now); loest keinen Usage-Fetch aus. Translation-Key `refresh` wie beim Workspace-Button - unterschieden nur ueber das Device (Go Gauge Konto vs. Go Gauge <Workspace>); die entity_id ist device-praefixiert."
+    source: "button.py:71-83"
   - logical: account_auto_update_models
     platform: switch
     device: account

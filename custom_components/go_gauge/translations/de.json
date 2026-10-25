@@ -123,9 +123,6 @@
     "button": {
       "refresh": {
         "name": "Aktualisieren"
-      },
-      "refresh_account": {
-        "name": "Konto aktualisieren"
       }
     }
   },

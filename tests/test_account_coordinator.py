@@ -470,3 +470,138 @@ def test_workspace_coordinators_tolerates_missing_data():
     hass_no_domain = MagicMock()
     hass_no_domain.data = {"other_domain": {}}
     assert account.workspace_coordinators(hass_no_domain) == {}
+
+
+# ============================================================================
+# REVIEW-M3: last_usage_attempt marks a real fetch, not a publish tick
+# ============================================================================
+
+def _usage_ok() -> dict[str, Any]:
+    """Minimal successful usage response (all three windows, status ok)."""
+    return {
+        "usage": {
+            "rolling": {"percent": 10.0, "status": "ok", "resetsAt": "2026-09-05T00:00:00Z"},
+            "weekly": {"percent": 20.0, "status": "ok", "resetsAt": "2026-09-08T00:00:00Z"},
+            "monthly": {"percent": 30.0, "status": "ok", "resetsAt": "2026-10-04T00:00:00Z"},
+        },
+        "status": "ok",
+    }
+
+
+def _make_usage_coordinator(
+    *, tokens: list[str] | None = None, auto_usage: bool = True
+):
+    """Build a real ``GoGaugeCoordinator`` (usage clock) with a mocked client.
+
+    ``GoGaugeCoordinator`` is the WORKSPACE usage coordinator; its
+    ``last_usage_attempt`` bookkeeping is what review fix M3 moved into the
+    ``usage_due`` branch.
+    """
+    hass = MagicMock()
+    hass.data = {}
+    with patch.object(
+        coordinator_module, "async_get_clientsession", lambda _hass: MagicMock()
+    ):
+        coordinator = coordinator_module.GoGaugeCoordinator(
+            hass,
+            ["token-a"] if tokens is None else list(tokens),
+            {const.CONF_AUTO_UPDATE_USAGE: auto_usage},
+        )
+    client = MagicMock()
+    client.fetch_usage = AsyncMock(return_value=_usage_ok())
+    coordinator._client = client
+    return coordinator, client
+
+
+@pytest.mark.asyncio
+async def test_publish_tick_without_due_fetch_keeps_the_attempt_timestamp():
+    """[REVIEW-M3] No due fetch -> ``last_usage_attempt`` keeps aging.
+
+    The timestamp names a FETCH attempt, not a publish tick: writing it on every
+    tick would make an old outcome look fresh forever (the reachability TTL
+    could never expire). Covered twice: interval not elapsed and no token.
+    """
+    sentinel = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    coordinator, client = _make_usage_coordinator()
+    coordinator.last_usage_fetch = datetime.now(timezone.utc) - timedelta(minutes=1)
+    coordinator.last_usage_attempt = sentinel
+
+    result = await coordinator._async_update_data()
+
+    assert coordinator.last_usage_attempt is sentinel
+    assert result["last_usage_attempt"] == sentinel.isoformat()
+    client.fetch_usage.assert_not_awaited()
+
+    empty, empty_client = _make_usage_coordinator(tokens=[])
+    empty.last_usage_attempt = sentinel
+
+    assert (await empty._async_update_data())["last_usage_attempt"] == sentinel.isoformat()
+    assert empty.last_usage_attempt is sentinel
+    empty_client.fetch_usage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_due_fetch_sets_the_attempt_timestamp():
+    """[REVIEW-M3] A due fetch writes ``last_usage_attempt`` in this cycle."""
+    coordinator, client = _make_usage_coordinator()
+    assert coordinator.last_usage_fetch is None
+
+    before = datetime.now(timezone.utc)
+    await coordinator._async_update_data()
+    after = datetime.now(timezone.utc)
+
+    client.fetch_usage.assert_awaited_once()
+    assert coordinator.last_usage_attempt is not None
+    assert before <= coordinator.last_usage_attempt <= after
+    assert coordinator.last_usage_outcome == "ok"
+
+
+class _AttemptSpy(coordinator_module.GoGaugeCoordinator):
+    """Records every write to ``last_usage_attempt`` (review fix M3)."""
+
+    attempt_writes: list[Any]
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        object.__setattr__(self, "attempt_writes", [])
+        super().__init__(*args, **kwargs)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "last_usage_attempt" and hasattr(self, "attempt_writes"):
+            self.attempt_writes.append(value)
+        super().__setattr__(name, value)
+
+
+@pytest.mark.asyncio
+async def test_auth_path_writes_the_attempt_timestamp_exactly_once():
+    """[REVIEW-M3] The 401 path must not write the attempt a second time.
+
+    The fetch became due, so the timestamp was already written at the top of the
+    cycle. The redundant write in the auth branch could only ever refresh it with
+    the same value - and hid the fact that the stamp belongs to the fetch.
+    """
+    hass = MagicMock()
+    hass.data = {}
+    with patch.object(
+        coordinator_module, "async_get_clientsession", lambda _hass: MagicMock()
+    ):
+        coordinator = _AttemptSpy(
+            hass, ["token-a"], {const.CONF_AUTO_UPDATE_USAGE: True}
+        )
+    client = MagicMock()
+    client.fetch_usage = AsyncMock(
+        side_effect=const.GoGaugeAuthError("HTTP 401 - token invalid/expired")
+    )
+    coordinator._client = client
+    coordinator.attempt_writes.clear()
+
+    before = datetime.now(timezone.utc)
+    with pytest.raises(coordinator_module.ConfigEntryAuthFailed):
+        await coordinator._async_update_data()
+    after = datetime.now(timezone.utc)
+
+    assert len(coordinator.attempt_writes) == 1
+    written = coordinator.attempt_writes[0]
+    assert isinstance(written, datetime)
+    assert before <= written <= after
+    assert coordinator.last_usage_attempt is written
+    assert coordinator.last_usage_outcome == "neutral"

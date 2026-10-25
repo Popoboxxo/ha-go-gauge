@@ -16,8 +16,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .account_logic import canonical_unique_id
-from .const import DOMAIN, ENTRY_KIND_ACCOUNT, conf_entry_kind
+from .const import (
+    ACCOUNT_UNIQUE_ID_PREFIX,
+    DOMAIN,
+    ENTRY_KIND_ACCOUNT,
+    conf_entry_kind,
+)
 from .coordinator import GoGaugeCoordinator
 from .entity import GoGaugeAccountEntityBase, GoGaugeEntityBase
 
@@ -68,11 +72,11 @@ class AccountRefreshButton(GoGaugeAccountEntityBase, ButtonEntity):
     """Forces a live model-catalog fetch (account entry, plan §2.11)."""
 
     _attr_icon = "mdi:refresh"
-    _attr_translation_key = "refresh_account"
+    _attr_translation_key = "refresh"
 
     def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_unique_id = canonical_unique_id("refresh")
+        self._attr_unique_id = f"{ACCOUNT_UNIQUE_ID_PREFIX}refresh"
 
     async def async_press(self) -> None:
         # The ONLY account HTTP path; it never raises and re-arms the timer.

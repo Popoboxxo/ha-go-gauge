@@ -572,24 +572,28 @@ def test_outcome_fail_on_transport_error():
     assert result["last_usage_attempt"] is not None
 
 
-def test_attempt_updated_even_without_a_due_fetch():
-    """[PLAN2-M3] ``last_usage_attempt`` is written on EVERY run.
+def test_attempt_not_updated_without_a_due_fetch():
+    """[PLAN2-M3][REVIEW-M3] No due fetch -> the attempt timestamp must AGE.
 
-    With auto-update off and a recent fetch nothing is due - the evidence
-    timestamp must still advance (the reachability matrix needs it), while the
-    outcome stays untouched (a publish-only run must not invent a failure).
+    With auto-update off and a recent fetch nothing is due, so this is a bare
+    publish tick: it must NOT refresh ``last_usage_attempt`` (an old outcome
+    would otherwise look fresh and never age out of the reachability TTL), and
+    it must not invent an outcome either.
     """
+    sentinel = datetime(2026, 1, 1, tzinfo=timezone.utc)
     now = datetime.now(timezone.utc)
     c = _MockCoordinator({})
     c.auto_usage = False
     c.last_usage_fetch = now
+    c.last_usage_attempt = sentinel
     c.__class__ = type("GoGaugeCoordinator", (_MockCoordinator, coord.GoGaugeCoordinator), {})
     c._async_update_data = coord.GoGaugeCoordinator._async_update_data.__get__(c)
 
     result = asyncio.run(c._async_update_data())
 
     assert result["last_usage_outcome"] is None
-    assert result["last_usage_attempt"] is not None
+    assert result["last_usage_attempt"] == sentinel.isoformat()
+    assert c.last_usage_attempt is sentinel
     assert result["last_usage_fetch"] == now.isoformat()
 
 

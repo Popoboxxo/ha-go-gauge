@@ -144,8 +144,9 @@ Namen und welche Attribute hat, steht im Integrationscode:
   (`warn_percent`, `pace_red_percent`, `usage_refresh_minutes`)
 - `custom_components/go_gauge/switch.py:56-83` (`auto_update_usage`);
   Konto: `switch.py:85-116` (`auto_update_models`)
-- `custom_components/go_gauge/button.py:45-64` (`refresh`, nur Usage);
-  Konto: `button.py:67-79` (`refresh_account`, Katalog)
+- `custom_components/go_gauge/button.py:49-68` (`refresh`, nur Usage);
+  Konto: `button.py:71-83` (`refresh`, Katalog — gleicher Translation-Key,
+  unterschieden über das Konto-Gerät)
 - `custom_components/go_gauge/entity.py` (Device-Info: Workspace- und
   Konto-Gerät), `account.py` (Konto-Entry, Reachability, Settings)
 

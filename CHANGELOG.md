@@ -30,8 +30,12 @@ bleiben erhalten.
 - **Globale Konto-Einstellungen** als Entities: `account_auto_update_models`
   (Switch, Default **ON**) und `account_models_refresh_minutes` (Number,
   **1–1440 min**, Default **60**) — inklusive eigenem Konto-Options-Flow.
-- `button.account_refresh` („Refresh account") — lädt ausschließlich den
-  Modell-Katalog über den einzigen HTTP-Pfad des Konto-Coordinators.
+- **Konto-Refresh-Button** am Konto-Gerät (`unique_id = account_refresh`,
+  Translation-Key `refresh`) — lädt ausschließlich den Modell-Katalog über den
+  einzigen HTTP-Pfad des Konto-Coordinators. Er teilt den Key `refresh` mit dem
+  Workspace-Button; unterschieden werden beide nur über das Gerät („Go Gauge
+  Konto" vs. „Go Gauge <Workspace>"), daher ist die abgeleitete `entity_id`
+  device-präfixiert. Bestehende Installationen behalten ihre `entity_id`.
 - **Evidenz-/TTL-basierte Erreichbarkeit**: `api_reachable` ist ON bei
   mindestens einem frischen Erfolg (Katalog- oder Usage-Fetch), `unknown` bei
   „API hat geantwortet, aber kein Erfolg" (401/kein Abo) oder ohne frische
@@ -79,14 +83,51 @@ bleiben erhalten.
 - Duplikat-Legacy-Entities werden deaktiviert und per Repair-Issue gemeldet,
   nie automatisch gelöscht.
 
+Aus dem Live-E2E vor dem Release behoben:
+
+- Vertauschte `RegistryEntry`-Semantik (`platform` = Integrationsdomain,
+  `domain` = Entity-Domain): Die Adoption war ein No-op, und der anschließende
+  Device-Move hätte die 5 Alt-Entities gelöscht; dieselbe Verwechslung ließ die
+  Alt-Settings-Entfernung nie greifen.
+- 401 beim Erst-Refresh brach das Setup ab (Entities `unavailable` ohne Reauth)
+  — jetzt `auth_error` plus Reauth-Flow.
+- `device_registry.devices`-Mapping-Zugriff entfernt (HA-2027.9-Deprecation).
+- Adoptions-Teilfehler blockieren jetzt Device-Move/Forward (Setup `False` /
+  `SETUP_RETRY`) statt Datenverlust zu riskieren.
+
 ### ✅ Verified
 
-- 578 Tests grün; `ruff check custom_components tests scripts` sauber;
-  `python3 scripts/check_json_consistency.py` grün.
-- E2E-Matrix (Min-Version 2026.8.0, v7→v8-Upgrade, Aktuell-Instanz,
-  Sprach-/Slug-Check) ist als Vorlage dokumentiert
-  (`docs/E2E-v8-account-split-2026-10-25.md`) und auf `/home/hermes/ha-test`
-  noch **nicht ausgeführt** (Nutzeraktion).
+- **638 Tests grün**; `ruff check custom_components tests scripts` sauber;
+  `mypy` sauber; `python3 scripts/check_json_consistency.py` grün;
+  `compileall` sauber; `manual_offline_smoke` grün.
+- **Canon-Check v1.4.0** (`check_canon.py` aus
+  `external/ha-gauge-standard`): `0 error(s), 0 warning(s)` gegen dieses Repo —
+  Canon v1.4.0 ist gepinnt und nutzbar.
+  Hinweis: Canon v1.4.0 ist inhaltlich noch auf dem Stand von go_gauge 1.6.0
+  (kein `account_entry`-Flag, `api_reachable` noch `last_update_success`-basiert,
+  „Refresh beider Zyklen") — Nachzug ist ein Canon-v1.5-Kandidat im
+  Submodul-Repo, kein Parent-Change.
+- **Live-E2E auf `/home/hermes/ha-test` (HA 2026.9.1) — PASS.** Vier Läufe: Lauf 1
+  legte die `RegistryEntry`-Semantik-Bugs offen (Adoption ein No-op, drohender Verlust
+  der 5 Alt-Entities, Alt-Settings wurden nie entfernt), Lauf 2 bestätigte die
+  funktionalen Fixes nach dem Registry-Restore, der Nachtrag-Sync den
+  `device_registry.devices`-Fix. Der finale Phase-F-Lauf nach den Review-Fixes ist
+  warnungsfrei und idempotent: 3 Syncs, `0` Treffer für
+  ERROR/CRITICAL/Traceback/`MIGRATION_ERROR`/`ValueError`/„does not generate unique IDs“
+  aus `go_gauge` und `0` Treffer der `device_registry.devices`-Deprecation (erwartet
+  bleiben nur die 401-Reauth-Warnung und HA's „not tested by HA“); 2 Config-Entries
+  (Workspace + Konto, beide `v8.1`, `state = loaded`), 39 aktive go_gauge-Entities,
+  2 deaktivierte Alt-Settings, 2 Devices, keine Duplikate. Die fünf Konto-Entities
+  behalten `entity_id`, `unique_id`, Registry-Zeilen-`id`, `device_id` und
+  `config_entry_id` über alle Syncs; der Konto-Button behält seine `entity_id` trotz
+  Key-Wechsel auf `refresh`. Idempotenz-Beleg: der dritte Sync ist für Entity-, Device-
+  und Config-Registry byte-identisch (md5), 39 aktiv / 2 deleted / 2 Devices / 2 Entries
+  / 243 States vor == nach. Protokoll:
+  `docs/E2E-v8-account-split-2026-10-25.md`.
+- **Offen (pending):** Lauf im HA-2026.8.0-Container — der E2E-PASS gilt ausschließlich
+  für HA 2026.9.1, die Mindestversion 2026.8.0 bleibt damit unbelegt. Ebenfalls
+  ausstehend: Canon-v1.5-Nachzug im Submodul-Repo, Release-Dreiklang
+  (Tag/Push/GitHub-Release) und der HACS-Update-Test.
 
 ### 💥 Breaking Changes
 

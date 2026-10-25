@@ -59,6 +59,7 @@ validation. Purely structural, no behaviour change.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -1814,6 +1815,15 @@ def _adopt_registries(
     and finally the removal of the legacy workspace model controls.
     The order is not cosmetic: moving/removing a device while entities still
     point at it would take those entities with it (plan §4.5, §11.3 V2).
+
+    Ordering INVARIANT (review fix M1): a single failed entity write stops the
+    pass BEFORE any device write. ``report.errors`` non-empty means the sweep is
+    incomplete, and an entity may still carry the old ``config_entry_id``;
+    handing the device over would then replace the ownership set and HA would
+    DELETE that entity (the E2E-B1 cascade). So no merge, no device move and no
+    legacy-setting removal happen in that state - ``merged_devices``,
+    ``device_moved`` and ``removed_settings`` stay empty/``0``, and the next
+    start repeats the whole pass idempotently.
     """
     # Lazy import on purpose: see ``_adoption_issue_ids`` - the offline test
     # loader only resolves sibling modules that are already in ``sys.modules``,
@@ -1843,6 +1853,17 @@ def _adopt_registries(
         canonical_unique_id=canonical_unique_id,
         device_id=device_id,
     )
+
+    # Review fix M1: no device write while the sweep is incomplete. See the
+    # ordering invariant in the docstring - the next run retries idempotently.
+    if report.errors:
+        _LOGGER.warning(
+            "Go Gauge: account adoption stopped after the entity sweep (%d "
+            "error(s)) - no device merge, no device hand-over and no legacy "
+            "setting removal this pass; the next start retries idempotently",
+            len(report.errors),
+        )
+        return
 
     _merge_duplicate_devices(
         hass,
@@ -1944,6 +1965,79 @@ async def async_adopt_account_entities(
     return report
 
 
+async def _async_shutdown_coordinator(coordinator: Any) -> None:
+    """Shut the coordinator's own scheduled refresh down - best effort (M2).
+
+    Home Assistant calls ``DataUpdateCoordinator.async_shutdown`` itself only
+    for a coordinator constructed WITH a ``config_entry``. ``AccountCoordinator``
+    is not (it owns two independent clocks, plan §6.2), so HA never shuts it
+    down and the 5 min publish tick would keep running after an unload or a
+    removal. The caller therefore stops the fetch timer first and then calls
+    this helper - both clocks have to be ended explicitly.
+
+    Tolerant on purpose: an older HA version, a test double without
+    ``async_shutdown`` or a failing shutdown must never break an unload/remove
+    (cleanup is best effort and the entry is going away anyway). The return
+    value is awaited only when it is awaitable, so a ``@callback``-style
+    implementation works as well as the real coroutine.
+    """
+    shutdown = getattr(coordinator, "async_shutdown", None)
+    if not callable(shutdown):
+        return
+    try:
+        result = shutdown()
+        if inspect.isawaitable(result):
+            await result
+    except Exception as err:  # noqa: BLE001 - cleanup is best effort
+        _LOGGER.debug(
+            "Go Gauge: shutting the account coordinator down failed (%s)", err
+        )
+
+
+async def _async_teardown_account_runtime(
+    hass: HomeAssistant, entry: ConfigEntry, coordinator: Any
+) -> None:
+    """Drop the account runtime again after a failed setup step (M1/M2).
+
+    The setup registered the coordinator under both ``hass.data[DOMAIN]`` keys
+    BEFORE the adoption ran. When setup has to report ``False`` (SETUP_RETRY)
+    that runtime must not survive: a live publish tick, a live fetch timer and a
+    stale adoption report behind a retrying entry would be exactly the
+    half-initialised state this fix is about.
+
+    Order: stop the fetch timer, shut the coordinator down (the publish tick -
+    HA does not do that for a coordinator without ``config_entry``), then clear
+    the registry keys. ``DATA_ACCOUNT_KEY`` is only popped while it still points
+    at THIS coordinator (identity or ``account.entry is entry``), so a foreign
+    object another subsystem placed there is never dropped. Never raises.
+    """
+    try:
+        await coordinator.async_stop_fetch_timer()
+    except Exception as err:  # noqa: BLE001 - cleanup is best effort
+        _LOGGER.debug(
+            "Go Gauge: stopping the account fetch timer during teardown failed "
+            "(%s)",
+            err,
+        )
+    await _async_shutdown_coordinator(coordinator)
+
+    try:
+        data = _domain_data(hass)
+        if data is None:
+            return
+        data.pop(entry.entry_id, None)
+        account = data.get(DATA_ACCOUNT_KEY)
+        if account is coordinator or getattr(account, "entry", None) is entry:
+            data.pop(DATA_ACCOUNT_KEY, None)
+        data.pop(DATA_ADOPTION_REPORT, None)
+    except Exception as err:  # noqa: BLE001 - teardown must never raise
+        _LOGGER.debug(
+            "Go Gauge: clearing the account runtime keys during teardown failed "
+            "(%s)",
+            err,
+        )
+
+
 async def async_setup_account_entry(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> bool:
@@ -1959,6 +2053,12 @@ async def async_setup_account_entry(
        plan §7.3),
     3. run the tolerant publish tick (``async_refresh``, no HTTP),
     4. run the entity adoption (registry/device work, legacy-setting removal),
+    5a. check the adoption report: a non-empty ``report.errors`` tears the
+       runtime down again and returns ``False`` BEFORE any platform forward -
+       the entry goes into ``SETUP_RETRY`` and the next start repeats the
+       idempotent adoption (review fix M1). No entity is forwarded and no device
+       is moved in that state, so the HA "device move deletes an un-adopted
+       entity" cascade (E2E-B1) cannot happen,
     5. forward ``ACCOUNT_PLATFORMS`` - **this call deliberately propagates**:
        HA must see its own platform errors, and nothing (registry work, adoption)
        is left half-done at this point because everything before it is
@@ -1975,14 +2075,20 @@ async def async_setup_account_entry(
 
     Everything BEFORE the forward is guarded (plan §2.4/M5, §11.1 R6): a
     registry problem or a failing publish/fetch/timer must not break the account
-    setup. The one exception is a coordinator that could not be CONSTRUCTED
-    (review fix M5): setup returns ``False`` instead of a silent ``True``. A
-    ``True`` would leave the entry in ``LOADED`` with no runtime at all ("loaded
-    but empty") - entities would exist without a coordinator until the next
-    manual reload. ``False`` puts the entry into ``SETUP_RETRY`` so HA retries
-    with backoff; the workspace entries are never affected by it.
+    setup. There are exactly two exceptions, both returning ``False``
+    (SETUP_RETRY, HA retries with backoff; the workspace entries are never
+    affected):
+
+    * a coordinator that could not be CONSTRUCTED (review fix M5) - ``True``
+      would leave the entry in ``LOADED`` with no runtime at all ("loaded but
+      empty"), with entities but no coordinator until the next manual reload,
+    * an adoption pass with ``report.errors`` (review fix M1) - the registry
+      migration is incomplete, so the entry must not be forwarded; the runtime
+      is torn down again (:func:`_async_teardown_account_runtime`) before
+      ``False`` is returned.
     """
     coordinator: AccountCoordinator | None = None
+    adoption_report: AdoptionReport | None = None
     try:
         data = _domain_data(hass, create=True)
         if data is None:
@@ -2026,7 +2132,7 @@ async def async_setup_account_entry(
 
             # 4. Entity adoption (never raises, doubly guarded here).
             try:
-                await async_adopt_account_entities(hass, entry)
+                adoption_report = await async_adopt_account_entities(hass, entry)
             except Exception as err:  # noqa: BLE001 - second net
                 _LOGGER.warning(
                     "Go Gauge: account entity adoption failed (%s) - continuing "
@@ -2051,6 +2157,25 @@ async def async_setup_account_entry(
             "Home Assistant retries it; the workspace entries are unaffected",
             getattr(entry, "entry_id", "?"),
         )
+        return False
+
+    # 5a. Adoption report (review fix M1): a non-empty ``errors`` means the
+    #     registry migration is INCOMPLETE - an entity may still carry the old
+    #     config_entry_id. Forwarding platforms or moving the account device in
+    #     that state would delete that entity (E2E-B1 cascade). So the runtime
+    #     is torn down completely and setup reports False: the entry goes into
+    #     SETUP_RETRY, HA retries with backoff and the next run repeats the
+    #     idempotent adoption. The workspace entries are never affected.
+    if adoption_report is not None and adoption_report.errors:
+        _LOGGER.warning(
+            "Go Gauge: account adoption of %s reported %d error(s) - setup "
+            "returns False so Home Assistant retries the entry with backoff; "
+            "no platform is forwarded and the account device is not moved in "
+            "this state",
+            getattr(entry, "entry_id", "?"),
+            len(adoption_report.errors),
+        )
+        await _async_teardown_account_runtime(hass, entry, coordinator)
         return False
 
     # 5. Platform forward - INTENTIONALLY outside every guard: Home Assistant
@@ -2091,11 +2216,17 @@ async def async_unload_account_entry(
     """Unload the account entry: platforms first, then timer and runtime.
 
     The platform unload decides everything: only when HA reports ``unload_ok``
-    are the fetch timer stopped, the coordinator dropped from
+    are the fetch timer stopped, the coordinator shut down, dropped from
     ``hass.data[DOMAIN]`` and ``DATA_ACCOUNT_KEY`` cleared - but only while that
     key still points at THIS coordinator (identity check) or at a coordinator of
     THIS entry (``account.entry is entry``). A foreign object another subsystem
     placed there is never dropped by an account unload.
+
+    Why the explicit shutdown (review fix M2): Home Assistant only calls
+    ``DataUpdateCoordinator.async_shutdown`` for a coordinator constructed WITH a
+    ``config_entry``. ``AccountCoordinator`` has none, so stopping the fetch
+    timer alone would leave the 5 min publish tick running. Order: fetch timer
+    first, then the coordinator shutdown.
 
     The ``DATA_ACCOUNT_KEY`` fallback mirrors :func:`async_remove_account_entry`
     (review follow-up): a runtime that is only reachable through that key still
@@ -2142,6 +2273,11 @@ async def async_unload_account_entry(
                         "Go Gauge: stopping the account fetch timer failed (%s)",
                         err,
                     )
+                # Review fix M2: HA only calls ``async_shutdown`` itself for a
+                # coordinator constructed WITH a ``config_entry``. The account
+                # coordinator has none, so its publish tick must be ended here
+                # explicitly - after the fetch timer, so no clock survives.
+                await _async_shutdown_coordinator(coordinator)
             if account is not None and (
                 account is coordinator or getattr(account, "entry", None) is entry
             ):
@@ -2171,7 +2307,9 @@ async def async_remove_account_entry(
     report. HA has normally unloaded the entry already; nothing here may raise.
     The fetch timer is additionally stopped here (review fix M4): a removal that
     is not preceded by a successful platform unload must not leave a live timer
-    behind.
+    behind. The coordinator is shut down as well (review fix M2): without a
+    ``config_entry`` HA never calls ``async_shutdown`` itself, so the publish
+    tick would otherwise poll a removed entry forever.
     """
     _delete_adoption_issues(hass)
     try:
@@ -2192,6 +2330,10 @@ async def async_remove_account_entry(
                         "failed (%s)",
                         err,
                     )
+                # Review fix M2: same as in the unload - no ``config_entry``
+                # means no HA-driven ``async_shutdown``; the publish tick would
+                # poll a removed entry forever without this call.
+                await _async_shutdown_coordinator(coordinator)
             if account is not None and (
                 account is coordinator or getattr(account, "entry", None) is entry
             ):

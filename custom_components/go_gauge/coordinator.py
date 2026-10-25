@@ -5,10 +5,11 @@ usage windows (default every 10 min, switchable in the options). The model
 catalog moved to the workspace-independent ``AccountCoordinator``
 (``account.py``) - see ``docs/PLAN-account-entry-2.0.0.md`` §2.7/§2.9.
 
-Every cycle also records its own evidence timestamps (``last_usage_attempt`` /
-``last_usage_ok`` / ``last_usage_outcome``) so the account-level reachability
-sensor can resolve the API state without guessing from ``last_update_success``
-(plan §5).
+Every cycle that performs a fetch also records its own evidence timestamps
+(``last_usage_attempt`` / ``last_usage_ok`` / ``last_usage_outcome``) so the
+account-level reachability sensor can resolve the API state without guessing from
+``last_update_success`` (plan §5). A publish tick without a due fetch leaves the
+attempt timestamp untouched, so stale evidence ages out via its TTL.
 
 Cloudflare note: plain urllib/requests get blocked (HTTP 403 Error 1010);
 aiohttp WITH full browser headers succeeds (verified live 2026-08-22).
@@ -221,7 +222,8 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Zeitstempel der letzten echten Abrufe je Zyklus
         self.last_usage_fetch: datetime | None = None
         # Evidence of the last usage cycle (plan §5): ``attempt`` is written on
-        # EVERY run, ``ok`` only on a successful fetch, ``outcome`` is one of
+        # every run that actually attempts a fetch (not on a bare publish tick),
+        # ``ok`` only on a successful fetch, ``outcome`` is one of
         # "ok"/"neutral"/"fail" (see ``_async_update_data``).
         self.last_usage_attempt: datetime | None = None
         self.last_usage_ok: datetime | None = None
@@ -310,11 +312,12 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
 
-        # Evidence bookkeeping (plan §5): an ATTEMPT happens on every run, even
-        # when no usage fetch is due - the reachability matrix needs to know
-        # when the coordinator last ran. The outcome/ok timestamps are only
-        # touched when a fetch actually happened (see the cycle end below).
-        self.last_usage_attempt = now
+        # Evidence bookkeeping (plan §5): ``last_usage_attempt`` names a REAL
+        # fetch attempt, not a bare publish tick. It is therefore written inside
+        # the ``usage_due`` block below: a tick without a due fetch must let the
+        # timestamp AGE so the reachability TTL expires correctly (review fix
+        # M3 - an old outcome must not look fresh). The outcome/ok timestamps are
+        # only touched when a fetch actually happened (see the cycle end below).
 
         # --- Usage-Zyklus -----------------------------------------------------
         # WICHTIG: Bei Fehlern NICHT die alten Daten verwerfen (kein Unbekannt!),
@@ -331,6 +334,8 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         ok_any = False
         if usage_due:
+            # A fetch is actually attempted -> this is the evidence timestamp.
+            self.last_usage_attempt = now
             fresh = []
             # Sammelt fehlende erwartete Felder ueber alle Workspaces dieses
             # Update-Zyklus, damit nur EINE aggregierte Warnung geloggt wird
@@ -412,10 +417,11 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     entry["note"] = str(err) or "HTTP 401 - token invalid/expired"
                     fresh.append(entry)
                     # 401 proves the API ANSWERED but not that it delivered
-                    # usage data: "neutral" (plan §5), never "fail". Attempt and
-                    # snapshot are published before the raise so the status
-                    # sensors can name the cause (unchanged behaviour).
-                    self.last_usage_attempt = now
+                    # usage data: "neutral" (plan §5), never "fail". The attempt
+                    # timestamp was already written when the fetch became due
+                    # (review fix M3 - no second write here); the snapshot is
+                    # published before the raise so the status sensors can name
+                    # the cause (unchanged behaviour).
                     self.last_usage_outcome = "neutral"
                     self.data = self._snapshot(now, fresh)
                     self.last_update_success = False

@@ -993,6 +993,7 @@ class FakeDataUpdateCoordinator:
         self.update_listener_calls = 0
         self.set_updated_data_calls = 0
         self.first_refresh_calls = 0
+        self.shutdown_calls = 0
         self.update_interval = update_interval
 
     @property
@@ -1044,6 +1045,17 @@ class FakeDataUpdateCoordinator:
     async def async_config_entry_first_refresh(self) -> None:
         """Count the call; the account coordinator must never reach it."""
         self.first_refresh_calls += 1
+
+    async def async_shutdown(self) -> None:
+        """Count the shutdown request (review fix M2).
+
+        Real Home Assistant calls this itself only for a coordinator that was
+        constructed WITH a ``config_entry``. The account coordinator has none, so
+        the integration has to call it explicitly on unload/remove/teardown -
+        that is exactly what the counter proves. ``last_update_success`` is
+        deliberately NOT touched: the real method only cancels the refresh timer.
+        """
+        self.shutdown_calls += 1
 
 
 def install_coordinator_stub() -> type[FakeDataUpdateCoordinator]:

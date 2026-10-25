@@ -98,6 +98,17 @@ def _stub_registry_migrations():
         yield
 
 
+def test_platforms_derive_from_account_platforms() -> None:
+    """[REVIEW-m8] One source: both entry kinds use the same platform set.
+
+    ``PLATFORMS`` is only the workspace-facing alias of ``ACCOUNT_PLATFORMS``
+    (const.py); a hand-maintained second list could silently diverge and a
+    missing platform kills the whole integration (one import error per platform).
+    """
+    assert init_module.PLATFORMS == list(const.ACCOUNT_PLATFORMS)
+    assert init_module.PLATFORMS is not const.ACCOUNT_PLATFORMS
+
+
 class TestAsyncMigrateEntryLogic:
     """Tests for async_migrate_entry() version migration logic.
 

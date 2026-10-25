@@ -17,7 +17,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from .const import MODELS_TTL_FACTOR, MODELS_TTL_FALLBACK_MINUTES, USAGE_TTL_FACTOR
+from .const import (
+    ACCOUNT_UNIQUE_ID_PREFIX,
+    MODELS_TTL_FACTOR,
+    MODELS_TTL_FALLBACK_MINUTES,
+    USAGE_TTL_FACTOR,
+)
 
 # The five account-level entities, in a stable order (registry sweeps and
 # tests iterate this tuple).
@@ -56,7 +61,7 @@ SOURCE_USAGE = "usage"
 
 def canonical_unique_id(kind: str) -> str:
     """Return the canonical ``unique_id`` of an account entity (``account_<kind>``)."""
-    return f"account_{kind}"
+    return f"{ACCOUNT_UNIQUE_ID_PREFIX}{kind}"
 
 
 def kind_for_unique_id(unique_id: str | None) -> str | None:

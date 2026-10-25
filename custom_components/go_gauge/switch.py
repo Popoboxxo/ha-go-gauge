@@ -17,8 +17,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .account_logic import canonical_unique_id
 from .const import (
+    ACCOUNT_UNIQUE_ID_PREFIX,
     CONF_AUTO_UPDATE_MODELS,
     DOMAIN,
     ENTRY_KIND_ACCOUNT,
@@ -95,7 +95,7 @@ class AccountAutoUpdateModelsSwitch(GoGaugeAccountEntityBase, SwitchEntity):
 
     def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_unique_id = canonical_unique_id("auto_update_models")
+        self._attr_unique_id = f"{ACCOUNT_UNIQUE_ID_PREFIX}auto_update_models"
 
     @property
     def is_on(self) -> bool | None:

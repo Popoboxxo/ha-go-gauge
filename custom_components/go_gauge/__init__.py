@@ -28,6 +28,7 @@ from .account import (
     async_unload_account_entry,
 )
 from .const import (
+    ACCOUNT_PLATFORMS,
     CONF_ENTRY_KIND,
     CONF_USAGE_REFRESH_MINUTES,
     DOMAIN,
@@ -42,7 +43,11 @@ from .coordinator import GoGaugeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor", "binary_sensor", "button", "switch", "number"]
+# ONE source for both entry kinds: a workspace entry and the account entry
+# forward/unload the SAME platform set, so the list must never diverge
+# (review fix m8). ``ACCOUNT_PLATFORMS`` lives in ``const.py`` and is the
+# authoritative definition; this is only the workspace-facing alias.
+PLATFORMS = list(ACCOUNT_PLATFORMS)
 
 
 def _entity_name_migration_callback(registry_entry: Any) -> dict[str, str] | None:

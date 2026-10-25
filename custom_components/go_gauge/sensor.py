@@ -24,8 +24,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .account_logic import canonical_unique_id
 from .const import (
+    ACCOUNT_UNIQUE_ID_PREFIX,
     DOMAIN,
     ENTRY_KIND_ACCOUNT,
     WINDOW_LABELS,
@@ -350,7 +350,7 @@ class ModelCatalogSensor(GoGaugeAccountEntityBase, SensorEntity):
 
     def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_unique_id = canonical_unique_id("model_catalog")
+        self._attr_unique_id = f"{ACCOUNT_UNIQUE_ID_PREFIX}model_catalog"
         # Cache fuer extra_state_attributes, invalidiert ueber
         # "models_updated_at" (aendert sich nur bei echtem Modell-Refresh,
         # nicht bei jedem Coordinator-Poll) - vermeidet dict-Copy +
@@ -429,7 +429,7 @@ class LiveModelsCountSensor(GoGaugeAccountEntityBase, SensorEntity):
 
     def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_unique_id = canonical_unique_id("models_live_count")
+        self._attr_unique_id = f"{ACCOUNT_UNIQUE_ID_PREFIX}models_live_count"
 
     @property
     def native_value(self) -> int | None:
@@ -445,7 +445,7 @@ class CheapestModelSensor(GoGaugeAccountEntityBase, SensorEntity):
 
     def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_unique_id = canonical_unique_id("cheapest_model")
+        self._attr_unique_id = f"{ACCOUNT_UNIQUE_ID_PREFIX}cheapest_model"
 
     @property
     def native_value(self) -> str | None:
@@ -466,7 +466,7 @@ class FreeModelsSensor(GoGaugeAccountEntityBase, SensorEntity):
 
     def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_unique_id = canonical_unique_id("free_models")
+        self._attr_unique_id = f"{ACCOUNT_UNIQUE_ID_PREFIX}free_models"
 
     @property
     def native_value(self) -> str | None:

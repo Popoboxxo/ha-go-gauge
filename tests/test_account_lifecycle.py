@@ -126,6 +126,27 @@ def hass():
     return hass
 
 
+@pytest.fixture(autouse=True)
+def adoption_registries():
+    """Fresh EMPTY entity/device registries for every lifecycle test.
+
+    Review fix M1 makes the setup evaluate the adoption report: a non-empty
+    ``report.errors`` returns ``False``. Without resolvable registries the
+    ``er.async_get``/``dr.async_get`` fakes raise and the adoption would report
+    an error in every test. Empty registries keep the adoption a clean no-op
+    (nothing to adopt, nothing to merge/move). Tests that need legacy state
+    install their own seeded registries on top.
+    """
+    entity = conftest.install_entity_registry_stub()
+    device = conftest.install_device_registry_stub(conftest.FakeDeviceRegistry(entity))
+    # Re-point the module references ``account.py`` bound at import time at the
+    # currently installed fake modules (other test files replace them).
+    account.er = sys.modules["homeassistant.helpers.entity_registry"]
+    account.dr = sys.modules["homeassistant.helpers.device_registry"]
+    conftest.reset_write_log()
+    return entity, device
+
+
 @pytest.fixture
 def timer():
     """Install a FRESH counting timer double for one test."""
@@ -155,6 +176,45 @@ def _install_client(monkeypatch, *, error: Exception | None = None) -> MagicMock
 def _coordinator(hass, entry: _FakeAccountEntry):
     """Return the coordinator the setup registered for `entry`."""
     return hass.data[const.DOMAIN][entry.entry_id]
+
+
+# Legacy v1.x catalog layout: every kind hangs on the canonical account device
+# but still carries a workspace-derived unique_id + config_entry_id.
+_LEGACY_ENTITY_IDS: dict[str, tuple[str, str]] = {
+    "model_catalog": ("sensor", "sensor.ws_model_catalog"),
+    "models_live_count": ("sensor", "sensor.ws_models_live_count"),
+    "cheapest_model": ("sensor", "sensor.ws_cheapest_model"),
+    "free_models": ("sensor", "sensor.ws_free_models"),
+    "api_reachable": ("binary_sensor", "binary_sensor.ws_api_reachable"),
+}
+WORKSPACE_OWNER_ID = "ws-owner"
+
+
+def _seed_legacy_catalog(entity_registry, device_registry) -> dict[str, Any]:
+    """Create the five v1.x catalog entities + the canonical account device."""
+    device_registry.add(
+        conftest.DeviceEntry(
+            id="dev-account",
+            name="Go Gauge Konto",
+            identifiers={(const.DOMAIN, const.ACCOUNT_DEVICE_IDENTIFIER)},
+            config_entries={WORKSPACE_OWNER_ID},
+        )
+    )
+    created: dict[str, Any] = {}
+    for kind in account_logic.ACCOUNT_ENTITY_KINDS:
+        entity_domain, entity_id = _LEGACY_ENTITY_IDS[kind]
+        created[kind] = entity_registry.add(
+            conftest.RegistryEntry(
+                entity_id=entity_id,
+                unique_id=f"{WORKSPACE_OWNER_ID}_{kind}",
+                platform=const.DOMAIN,
+                domain=entity_domain,
+                config_entry_id=WORKSPACE_OWNER_ID,
+                device_id="dev-account",
+                id=f"registry-{kind}",
+            )
+        )
+    return created
 
 
 # ============================================================================
@@ -340,6 +400,82 @@ async def test_setup_forwards_account_platforms_once(hass, monkeypatch):
 
 
 # ============================================================================
+# Setup: adoption report gate (review fix M1)
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_setup_returns_false_when_adoption_reports_errors(
+    hass, monkeypatch, adoption_registries
+):
+    """[REVIEW-M1] Incomplete adoption -> teardown + ``False``, never a forward.
+
+    The invalid intermediate state must never exist: no platform forward and no
+    device move while an entity still carries the old ``config_entry_id``. That
+    is exactly the E2E-B1 cascade - the device move replaces the ownership set
+    and HA deletes the not-yet-adopted entity. The runtime is torn down
+    completely (publish tick included) and the entry goes into ``SETUP_RETRY``;
+    the workspaces are untouched.
+
+    The second half proves the retry contract: once the registry write works,
+    the very same setup succeeds, forwards exactly once and hands the device
+    over.
+    """
+    entity_registry, device_registry = adoption_registries
+    legacy = _seed_legacy_catalog(entity_registry, device_registry)
+    entity_registry.raise_on_update = ValueError("registry write rejected")
+    _install_client(monkeypatch)
+    entry = _FakeAccountEntry()
+
+    # Capture the coordinator instances the setup builds (the failed one is
+    # popped from hass.data by the teardown, so it is only reachable here).
+    created: list[Any] = []
+    real_coordinator = account.AccountCoordinator
+
+    def _recording_coordinator(hass_arg, entry_arg):
+        coordinator = real_coordinator(hass_arg, entry_arg)
+        created.append(coordinator)
+        return coordinator
+
+    monkeypatch.setattr(account, "AccountCoordinator", _recording_coordinator)
+
+    result = await account.async_setup_account_entry(hass, entry)
+
+    data = hass.data[const.DOMAIN]
+    assert result is False
+    hass.config_entries.async_forward_entry_setups.assert_not_awaited()
+    # No runtime leak: neither key, nor the stale adoption report survives.
+    assert entry.entry_id not in data
+    assert const.DATA_ACCOUNT_KEY not in data
+    assert const.DATA_ADOPTION_REPORT not in data
+    # The publish-tick timer was shut down (M2) and the fetch timer stopped.
+    assert len(created) == 1
+    assert created[0].shutdown_calls == 1
+    assert created[0]._stopped is True
+    # Nothing was moved or removed - the entities are still in place.
+    assert device_registry.update_calls == []
+    assert device_registry.remove_calls == []
+    assert entity_registry.remove_calls == []
+    for entity in legacy.values():
+        assert entity.entity_id in entity_registry.entities
+
+    # --- second run, registry write works again ------------------------------
+    entity_registry.raise_on_update = None
+
+    result = await account.async_setup_account_entry(hass, entry)
+
+    assert result is True
+    hass.config_entries.async_forward_entry_setups.assert_awaited_once_with(
+        entry, const.ACCOUNT_PLATFORMS
+    )
+    report = hass.data[const.DOMAIN][const.DATA_ADOPTION_REPORT]
+    assert report.errors == []
+    assert report.device_moved == "dev-account"
+    assert sorted(report.moved) == sorted(
+        entity_id for _, entity_id in _LEGACY_ENTITY_IDS.values()
+    )
+
+
+# ============================================================================
 # Unload
 # ============================================================================
 
@@ -498,6 +634,54 @@ async def test_remove_stops_a_leftover_fetch_timer(hass, monkeypatch, timer):
     assert coordinator._stopped is True
     assert coordinator._unsub_fetch is None
     assert timer.unsub_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_unload_shuts_the_coordinator_down_once(hass, monkeypatch):
+    """[REVIEW-M2] Unload ends the publish tick explicitly - exactly once.
+
+    ``AccountCoordinator`` has no ``config_entry``, so Home Assistant never calls
+    ``async_shutdown`` itself; without this call the 5 min publish tick kept
+    polling after an unload.
+    """
+    _install_client(monkeypatch)
+    entry = _FakeAccountEntry()
+    await account.async_setup_account_entry(hass, entry)
+    coordinator = _coordinator(hass, entry)
+
+    assert await account.async_unload_account_entry(hass, entry) is True
+
+    assert coordinator.shutdown_calls == 1
+    assert coordinator._stopped is True
+
+
+@pytest.mark.asyncio
+async def test_unload_shuts_the_coordinator_down_via_the_account_key_fallback(
+    hass, monkeypatch
+):
+    """[REVIEW-M2] The DATA_ACCOUNT_KEY fallback also shuts the coordinator down."""
+    entry = _FakeAccountEntry()
+    coordinator, _started, _release = _register_coordinator(
+        hass, entry, monkeypatch=monkeypatch
+    )
+    hass.data[const.DOMAIN].pop(entry.entry_id)  # only DATA_ACCOUNT_KEY remains
+
+    assert await account.async_unload_account_entry(hass, entry) is True
+
+    assert coordinator.shutdown_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_remove_shuts_the_coordinator_down_once(hass, monkeypatch):
+    """[REVIEW-M2] Removal shuts the coordinator down exactly once."""
+    entry = _FakeAccountEntry()
+    coordinator, _started, _release = _register_coordinator(
+        hass, entry, monkeypatch=monkeypatch
+    )
+
+    await account.async_remove_account_entry(hass, entry)
+
+    assert coordinator.shutdown_calls == 1
 
 
 # ============================================================================

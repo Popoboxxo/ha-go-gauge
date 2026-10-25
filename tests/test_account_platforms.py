@@ -743,5 +743,96 @@ async def test_account_number_updates_coordinator_and_options_without_reload():
     assert entry.update_listeners == []
 
 
+# ============================================================================
+# 13. Canon v1.4.0 guard: statically parseable account entity identity
+# ============================================================================
+#
+# The canon checker parses ``_attr_unique_id`` textually (it cannot resolve
+# helper calls) and requires the literal suffix after the placeholder. These
+# guard tests pin the runtime values that the literal templates must produce:
+# a future refactor back to a helper call would keep them green here, but the
+# explicit literal-token assertion below documents the checker contract.
+
+ACCOUNT_ENTITY_CLASSES = (
+    ("model_catalog", sensor.ModelCatalogSensor),
+    ("models_live_count", sensor.LiveModelsCountSensor),
+    ("cheapest_model", sensor.CheapestModelSensor),
+    ("free_models", sensor.FreeModelsSensor),
+    ("api_reachable", binary_sensor.ApiReachableBinarySensor),
+    ("refresh", button.AccountRefreshButton),
+    ("auto_update_models", switch.AccountAutoUpdateModelsSwitch),
+    ("models_refresh_minutes", number.AccountModelsRefreshMinutesNumber),
+)
+
+
+@pytest.mark.parametrize(("kind", "entity_cls"), ACCOUNT_ENTITY_CLASSES)
+def test_account_entity_unique_id_matches_canonical_helper(kind, entity_cls):
+    """[CANON1.4] All 8 account entities carry ``canonical_unique_id(kind)``."""
+    coordinator = _FakeAccountCoordinator()
+    entry = _FakeEntry()
+    entity_obj = entity_cls(coordinator, entry)
+
+    assert entity_obj._attr_unique_id == account_logic.canonical_unique_id(kind)
+    assert entity_obj._attr_unique_id == f"account_{kind}"
+
+
+@pytest.mark.parametrize(("kind", "entity_cls"), ACCOUNT_ENTITY_CLASSES)
+def test_account_entity_unique_id_template_is_statically_parseable(kind, entity_cls):
+    """[CANON1.4] ``_attr_unique_id`` text ends with the literal kind token.
+
+    Mirrors the checker's ``_literal_token`` rule: split on ``{...}`` and take
+    the last non-empty part, stripped of ``_``. A helper call in ``__init__``
+    would not be visible to that regex and the canon check would fail again.
+    """
+    import inspect
+    import re
+
+    source = inspect.getsource(entity_cls)
+    match = re.search(r'_attr_unique_id\s*=\s*f?"([^"]+)"', source)
+    assert match is not None, (
+        f"{entity_cls.__name__}: _attr_unique_id must be a literal f-string "
+        "(the canon checker cannot parse helper calls)"
+    )
+    parts = [part for part in re.split(r"\{[^}]*\}", match.group(1)) if part.strip("_")]
+    assert parts and parts[-1].strip("_") == kind
+
+
+def test_account_refresh_button_translation_key_is_canon_refresh():
+    """[CANON1.4] Button uses the canon key ``refresh`` (no account-specific key)."""
+    entity_obj = button.AccountRefreshButton(_FakeAccountCoordinator(), _FakeEntry())
+
+    assert entity_obj._attr_translation_key == "refresh"
+    # The unique_id is what distinguishes the account button from the
+    # workspace refresh button - it must stay ``account_refresh``.
+    assert entity_obj._attr_unique_id == "account_refresh"
+
+
+def test_account_refresh_button_key_is_translated_everywhere():
+    """[CANON1.4] ``refresh`` is the ONLY button translation key in all files."""
+    import json
+
+    assert button.AccountRefreshButton.__dict__["_attr_translation_key"] == "refresh"
+    for rel in ("strings.json", "translations/de.json", "translations/en.json"):
+        data = json.loads((BASE / rel).read_text(encoding="utf-8"))
+        assert set(data["entity"]["button"]) == {"refresh"}, rel
+
+
+def test_account_models_number_bounds_are_literal_1_to_1440():
+    """[CANON1.4] Range is literal 1..1440 (checker parses digits, not consts)."""
+    entity_obj = number.AccountModelsRefreshMinutesNumber(
+        _FakeAccountCoordinator(), _FakeEntry()
+    )
+
+    assert entity_obj._attr_native_min_value == 1
+    assert entity_obj._attr_native_max_value == 1440
+    assert entity_obj._attr_native_step == 1
+
+
+def test_account_unique_id_prefix_is_the_single_source():
+    """[CANON1.4] Prefix constant + helper agree on the canonical shape."""
+    assert const.ACCOUNT_UNIQUE_ID_PREFIX == "account_"
+    assert account_logic.canonical_unique_id("model_catalog") == "account_model_catalog"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

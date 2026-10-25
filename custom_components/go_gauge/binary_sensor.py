@@ -21,8 +21,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .account_logic import canonical_unique_id
 from .const import (
+    ACCOUNT_UNIQUE_ID_PREFIX,
     DOMAIN,
     ENTRY_KIND_ACCOUNT,
     WINDOW_LABELS,
@@ -164,7 +164,7 @@ class ApiReachableBinarySensor(GoGaugeAccountEntityBase, BinarySensorEntity):
 
     def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_unique_id = canonical_unique_id("api_reachable")
+        self._attr_unique_id = f"{ACCOUNT_UNIQUE_ID_PREFIX}api_reachable"
         # One snapshot per state write - filled in ``is_on``, reused by
         # ``extra_state_attributes`` (see the class docstring).
         self._reachability_snapshot: ReachabilitySnapshot | None = None

@@ -80,6 +80,12 @@ DATA_ADOPTION_REPORT = "_adoption_report"
 ACCOUNT_DEVICE_IDENTIFIER = "account"
 ACCOUNT_PLATFORMS = ["sensor", "binary_sensor", "button", "switch", "number"]
 
+# Single source for every account-level entity ``unique_id``: the value is
+# always ``<prefix><kind>``. A plain string literal on purpose - the static
+# canon checker parses the entity templates (``f"{ACCOUNT_UNIQUE_ID_PREFIX}<kind>"``)
+# and cannot resolve helper calls.
+ACCOUNT_UNIQUE_ID_PREFIX = "account_"
+
 # The account coordinator's own ``update_interval`` is this publish tick only -
 # it re-renders state/attributes from cached evidence and never performs HTTP.
 ACCOUNT_PUBLISH_TICK_MINUTES = 5

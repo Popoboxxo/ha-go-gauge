@@ -16,10 +16,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .account_logic import canonical_unique_id
 from .const import (
-    ACCOUNT_MODELS_REFRESH_MAX,
-    ACCOUNT_MODELS_REFRESH_MIN,
+    ACCOUNT_UNIQUE_ID_PREFIX,
     CONF_MODELS_REFRESH_MINUTES,
     DEFAULT_PACE_RED_PERCENT,
     DEFAULT_WARN_PERCENT,
@@ -180,12 +178,16 @@ class AccountModelsRefreshMinutesNumber(_AccountSettingNumber):
     _attr_icon = "mdi:timer-outline"
     _attr_native_unit_of_measurement = "min"
     _attr_translation_key = "models_refresh_min"
+    # Literal template (not ``canonical_unique_id``): the static canon checker
+    # parses ``_attr_unique_id`` textually and cannot resolve helper calls.
+    # The resulting value is unchanged (``account_models_refresh_minutes``).
+    _attr_unique_id = f"{ACCOUNT_UNIQUE_ID_PREFIX}models_refresh_minutes"
 
     def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:
+        # Literal bounds as well - same 1..1440 range, statically parseable.
         super().__init__(coordinator, entry,
-                         unique_id=canonical_unique_id("models_refresh_minutes"),
-                         min_value=ACCOUNT_MODELS_REFRESH_MIN,
-                         max_value=ACCOUNT_MODELS_REFRESH_MAX)
+                         unique_id=self._attr_unique_id,
+                         min_value=1, max_value=1440)
 
     @property
     def native_value(self) -> float | None:
