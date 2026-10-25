@@ -211,22 +211,31 @@ def test_hacs_json_metadata() -> None:
 def test_manifest_metadata() -> None:
     """[REPO-HYGIENE] ``manifest.json`` carries the HACS-required fields.
 
-    ``categories`` is what makes the integration findable in the (new) HACS
-    store listing, ``codeowners``/``config_flow``/``iot_class`` are hassfest
-    requirements, and ``domain`` must match the ``custom_components`` folder.
+    ``codeowners``/``config_flow``/``iot_class`` are hassfest requirements, and
+    ``domain`` must match the ``custom_components`` folder.
+
+    ``categories`` is *optional*: hassfest 2026.10 rejects the key
+    (``not a valid option at 'categories'``), while the HACS action only warns
+    that the manifest has none. So the field is absent today, and the shape
+    check below is future-proofing - when the shipped hassfest accepts the key
+    it can simply be added back without touching this test.
     """
     manifest = json.loads(_read(MANIFEST_FILE))
 
     assert manifest.get("domain") == "go_gauge", (
         f"manifest 'domain' is {manifest.get('domain')!r}, expected 'go_gauge'"
     )
-    categories = manifest.get("categories")
-    assert isinstance(categories, list) and categories, (
-        f"manifest 'categories' must be a non-empty list, got {categories!r}"
-    )
-    assert all(isinstance(item, str) and item.strip() for item in categories), (
-        f"manifest 'categories' entries must be non-empty strings, got {categories!r}"
-    )
+    if "categories" in manifest:
+        categories = manifest["categories"]
+        assert isinstance(categories, list) and 1 <= len(categories) <= 3, (
+            f"manifest 'categories' must be a list of 1-3 entries, got {categories!r}"
+        )
+        assert all(isinstance(item, str) and item.strip() for item in categories), (
+            f"manifest 'categories' entries must be non-empty strings, got {categories!r}"
+        )
+        assert len(set(categories)) == len(categories), (
+            f"manifest 'categories' must not contain duplicates, got {categories!r}"
+        )
     assert manifest.get("version") == EXPECTED_VERSION, (
         f"manifest 'version' is {manifest.get('version')!r}, expected {EXPECTED_VERSION!r}"
     )

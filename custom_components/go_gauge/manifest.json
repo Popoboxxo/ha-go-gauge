@@ -4,7 +4,6 @@
   "codeowners": [
     "@Popoboxxo"
   ],
-  "categories": ["computers_network.cloud_developer_tools"],
   "config_flow": true,
   "documentation": "https://github.com/Popoboxxo/ha-go-gauge",
   "integration_type": "service",
