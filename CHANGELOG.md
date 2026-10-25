@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.0.2] — 2026-10-25
+
+### 📝 Documentation
+
+- Bilingual README: `README.md` is now the English primary document, the full
+  German version lives in `README.de.md` (same structure, language switcher on
+  line 1).
+- New sections: status (custom repository, not in the default store),
+  compatibility, global vs. per-workspace settings, screenshot, troubleshooting
+  and diagnostics/debug logging.
+- Repository hygiene: `render_readme` removed from `hacs.json`; manifest
+  `categories` are deferred until the shipped hassfest accepts the key.
+- No functional changes.
+
 ## [2.0.1] — 2026-10-25
 
 ### 📝 Documentation

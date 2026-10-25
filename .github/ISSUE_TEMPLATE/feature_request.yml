@@ -1,0 +1,81 @@
+name: Feature request
+description: Suggest a new sensor, option, dashboard improvement or anything else for Go Gauge HA.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion.
+
+        Please search the [existing issues](https://github.com/Popoboxxo/ha-go-gauge/issues?q=is%3Aissue)
+        first. Feature requests that fit the scope of this integration (OpenCode Go
+        usage, limits, cost ratio and account/model catalog inside Home Assistant) are
+        welcome; requests aimed at the upstream OpenCode API itself belong to the
+        upstream project.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: >-
+        Which problem are you trying to solve? Describe your use case and what you
+        currently have to do instead.
+      placeholder: >-
+        I want an alert before the weekly window is exhausted, but ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed solution
+      description: What should the integration do instead? Entities, attributes, option or behaviour.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: >-
+        Workarounds you tried (template sensors, automations, dashboards) and why they
+        are not good enough.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: affected_area
+    attributes:
+      label: Affected area
+      description: Which part of the integration would this touch?
+      options:
+        - Usage sensors
+        - Forecast & pace
+        - Account & model catalog
+        - Config flow
+        - Dashboards
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Mockups, example YAML, links to related issues or upstream documentation.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched the existing issues and found no duplicate.
+          required: true
+        - label: This request is about Go Gauge HA, not about the upstream OpenCode API.
+          required: true
+        - label: I included no API tokens or other secrets.
+          required: true

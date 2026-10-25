@@ -1,0 +1,14 @@
+# Dependabot configuration.
+#
+# The repository has no runtime dependencies (the integration uses only Home
+# Assistant and the standard library), so the only updatable ecosystem is the
+# GitHub Actions used by the workflows in .github/workflows/.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
