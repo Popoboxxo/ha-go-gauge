@@ -1,3 +1,5 @@
+[English](README.en.md) | [Deutsch](README.md)
+
 # Go Gauge — Dashboards
 
 Fertige Dashboard-Vorlagen (YAML), mit denen sich Nutzung, Limits, Pace und
@@ -28,13 +30,11 @@ ist als Konto-Panel vorhanden):
 - eine Katalog-/Konto-Sektion (Models, Live Models, Cheapest Model,
   Free Models, API Reachable, globale Konto-Settings, Katalog-Refresh).
 
-Screenshots:
-
-![Standard-Dashboard (Platzhalter)](docs/dashboards/screenshots/standard.png)
-Standard-Dashboard — Screenshot folgt (Platzhalter).
-
-![Mushroom-Dashboard (Platzhalter)](docs/dashboards/screenshots/mushroom.png)
-Mushroom-Dashboard — Screenshot folgt (Platzhalter).
+**Hinweis zu Screenshots:** Die Beispiel-Dashboards liegen ausschließlich als
+YAML vor. Screenshots sind bewusst nicht enthalten, weil `entity_id`s und Layouts
+installationsabhängig sind (Workspace-Slug, Device-Präfix, Systemsprache) — ein
+Screenshot würde eine Bindung vortäuschen, die in jeder Installation anders
+aussieht. Maßgeblich sind die Vorlagen und [`entity-map.yaml`](entity-map.yaml).
 
 ## 2. Voraussetzungen
 

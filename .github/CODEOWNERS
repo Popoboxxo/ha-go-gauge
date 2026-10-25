@@ -1,0 +1,4 @@
+# Default code owners for the whole repository.
+# Every file and directory is owned by the maintainer, so changes require a
+# review by @Popoboxxo.
+* @Popoboxxo

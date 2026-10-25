@@ -1,0 +1,148 @@
+name: Bug report
+description: Something in Go Gauge HA does not work as documented (wrong state, setup failure, error in the log).
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        Before you open this issue, please:
+
+        - search the [existing issues](https://github.com/Popoboxxo/ha-go-gauge/issues?q=is%3Aissue)
+          for the same behaviour,
+        - reproduce it on the latest release listed under
+          [Releases](https://github.com/Popoboxxo/ha-go-gauge/releases),
+        - and **never paste a real API token** (yours or anybody else's).
+
+        Go Gauge HA is distributed as a **HACS custom repository**. It is not part
+        of the HACS default store, so "the integration does not appear in the store"
+        is expected behaviour and not a bug.
+
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      description: The version shown in Settings -> About (for example 2026.8.0).
+      placeholder: "2026.8.0"
+    validations:
+      required: true
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: Go Gauge HA version
+      description: >-
+        The version of this integration. Shown in HACS next to the repository, or in
+        Settings -> Devices & Services -> Go Gauge HA.
+      placeholder: "2.0.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation_method
+    attributes:
+      label: Installation method
+      description: >-
+        How the integration files ended up in your `config/custom_components/go_gauge`
+        directory. This project is a HACS custom repository, not part of the HACS
+        default store; the Marketplace route (My-Link, HA 2026.11+) still installs
+        this same custom repository.
+      options:
+        - HACS custom repository
+        - HACS Marketplace via My-Link (HA 2026.11+)
+        - Manual copy
+        - Other (describe under "Steps to reproduce")
+    validations:
+      required: true
+
+  - type: input
+    id: workspace_entries
+    attributes:
+      label: Number of configured Go Gauge HA entries
+      description: >-
+        How many instances of the integration you have configured (one per OpenCode
+        workspace, plus the automatically created account entry).
+      placeholder: "2 (1 workspace + account)"
+    validations:
+      required: true
+
+  - type: input
+    id: affected_workspace
+    attributes:
+      label: Affected workspace / account
+      description: >-
+        The title of the affected entry as shown in the integration list (for example
+        "My Workspace") and the device it belongs to. Do not paste the token.
+      placeholder: "My Workspace (Go Gauge Konto)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that reliably triggers the problem.
+      placeholder: |
+        1. Restart Home Assistant
+        2. Open Settings -> Devices & Services -> Go Gauge HA
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behaviour
+    attributes:
+      label: Expected behaviour
+      description: What you expected to happen instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual_behaviour
+    attributes:
+      label: Actual behaviour
+      description: >-
+        What actually happened. Include the entity id, the state you see and whether
+        the state is `unknown`, `unavailable` or a wrong value.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: >-
+        Enable debug logging first (Settings -> Devices & Services -> Go Gauge HA ->
+        "Enable debug logging", or add `custom_components.go_gauge: debug` under
+        `logger:` in `configuration.yaml`) and reproduce the problem. Then paste only
+        the lines mentioning `go_gauge`.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics JSON
+      description: >-
+        Settings -> Devices & Services -> Go Gauge HA -> three-dot menu ->
+        "Download diagnostics". Attach or paste the JSON. The export redacts the API
+        token, so no secret should be included - please check the output once anyway.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched the existing issues and found no duplicate.
+          required: true
+        - label: I reproduced this on the latest published release, not on an older one.
+          required: true
+        - label: I attached the diagnostics export of the affected entry.
+          required: true
+        - label: I pasted no API tokens, no `.storage` content and no other secrets.
+          required: true
