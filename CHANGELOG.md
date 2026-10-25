@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.0.4] — 2026-10-25
+
+### 📝 Documentation
+
+- Clarify the naming policy: English canonical names, translation keys and
+  unique IDs; Home Assistant generates localized entity IDs once and keeps
+  them stable
+- Document the account prefix and user-defined workspace prefixes
+- Correct the dashboard documentation and add a repository hygiene test
+
+No functional changes.
+
 ## [2.0.3] — 2026-10-25
 
 ### 🔧 CI / Dependencies
