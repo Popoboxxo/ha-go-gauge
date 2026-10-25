@@ -443,14 +443,18 @@ async def test_account_setup_forwards_account_platforms_once_after_adoption(
 # ============================================================================
 
 def _seed_legacy_catalog(entity_registry: Any) -> None:
-    """Create the five v1.x catalog entities on the canonical device."""
-    platforms = account_logic.PLATFORM_BY_KIND
+    """Create the five v1.x catalog entities on the canonical device.
+
+    ``PLATFORM_BY_KIND`` supplies the ENTITY domain (``RegistryEntry.domain``);
+    ``RegistryEntry.platform`` is the integration domain (``const.DOMAIN``).
+    """
+    entity_domains = account_logic.PLATFORM_BY_KIND
     for kind in account_logic.ACCOUNT_ENTITY_KINDS:
         entity_registry.add(conftest.RegistryEntry(
-            entity_id=f"{platforms[kind]}.ws_{kind}",
+            entity_id=f"{entity_domains[kind]}.ws_{kind}",
             unique_id=f"{WORKSPACE_ENTRY_ID}_{kind}",
-            platform=platforms[kind],
-            domain=const.DOMAIN,
+            platform=const.DOMAIN,
+            domain=entity_domains[kind],
             config_entry_id=WORKSPACE_ENTRY_ID,
             device_id="dev-account",
         ))
@@ -510,25 +514,25 @@ def test_legacy_model_settings_removed_and_idempotent():
         ("switch.ws_auto_update_models", "ws_auto_update_models", "switch"),
         ("number.ws_models_refresh_minutes", "ws_models_refresh_minutes", "number"),
     ]
-    for entity_id, unique_id, platform in legacy:
+    for entity_id, unique_id, entity_domain in legacy:
         entity_registry.add(conftest.RegistryEntry(
             entity_id=entity_id,
             unique_id=unique_id,
-            platform=platform,
-            domain=const.DOMAIN,
+            platform=const.DOMAIN,
+            domain=entity_domain,
         ))
     canonical = [
         ("switch.account_auto_update_models", "account_auto_update_models", "switch"),
         ("number.account_models_refresh_minutes", "account_models_refresh_minutes", "number"),
-        # Unrelated platform entry must never be touched either.
+        # Unrelated entity domain must never be touched either.
         ("sensor.account_model_catalog", "account_model_catalog", "sensor"),
     ]
-    for entity_id, unique_id, platform in canonical:
+    for entity_id, unique_id, entity_domain in canonical:
         entity_registry.add(conftest.RegistryEntry(
             entity_id=entity_id,
             unique_id=unique_id,
-            platform=platform,
-            domain=const.DOMAIN,
+            platform=const.DOMAIN,
+            domain=entity_domain,
         ))
 
     assert account.async_remove_legacy_model_settings(hass) == 2
@@ -545,6 +549,56 @@ def test_legacy_model_settings_removed_and_idempotent():
     # Idempotent: nothing left to remove on a second pass.
     assert account.async_remove_legacy_model_settings(hass) == 0
     assert len(entity_registry.remove_calls) == 2
+
+
+def test_legacy_model_settings_removed_with_real_ha_semantics():
+    """[E2E-2026-10-25] Removal works with HA's real field semantics.
+
+    ``platform`` is the integration domain (``go_gauge``), ``domain`` the entity
+    domain (``switch``/``number``). The inverted predicate removed nothing, the
+    dead controls stayed behind on the live instance.
+    """
+    entity_registry = conftest.install_entity_registry_stub()
+    account.er = sys.modules["homeassistant.helpers.entity_registry"]
+    hass = _Hass()
+
+    legacy = [
+        (f"switch.{WORKSPACE_ENTRY_ID}_auto_update_models",
+         f"{WORKSPACE_ENTRY_ID}_auto_update_models", "switch"),
+        (f"number.{WORKSPACE_ENTRY_ID}_models_refresh_minutes",
+         f"{WORKSPACE_ENTRY_ID}_models_refresh_minutes", "number"),
+    ]
+    for entity_id, unique_id, entity_domain in legacy:
+        entity_registry.add(conftest.RegistryEntry(
+            entity_id=entity_id,
+            unique_id=unique_id,
+            platform=const.DOMAIN,
+            domain=entity_domain,
+        ))
+    canonical = [
+        ("switch.account_auto_update_models",
+         "account_auto_update_models", "switch"),
+        ("number.account_models_refresh_minutes",
+         "account_models_refresh_minutes", "number"),
+    ]
+    for entity_id, unique_id, entity_domain in canonical:
+        entity_registry.add(conftest.RegistryEntry(
+            entity_id=entity_id,
+            unique_id=unique_id,
+            platform=const.DOMAIN,
+            domain=entity_domain,
+        ))
+
+    assert account.async_remove_legacy_model_settings(hass) == 2
+
+    assert set(entity_registry.remove_calls) == {
+        entity_id for entity_id, _uid, _domain in legacy
+    }
+    for _entity_id, unique_id, _domain in canonical:
+        assert any(
+            entry.unique_id == unique_id
+            for entry in entity_registry.entities.values()
+        )
 
 
 @pytest.mark.asyncio
@@ -566,14 +620,14 @@ async def test_adoption_reports_removed_settings_and_second_pass_removes_zero():
     entity_registry.add(conftest.RegistryEntry(
         entity_id="switch.ws_auto_update_models",
         unique_id="ws_auto_update_models",
-        platform="switch",
-        domain=const.DOMAIN,
+        platform=const.DOMAIN,
+        domain="switch",
     ))
     entity_registry.add(conftest.RegistryEntry(
         entity_id="number.ws_models_refresh_minutes",
         unique_id="ws_models_refresh_minutes",
-        platform="number",
-        domain=const.DOMAIN,
+        platform=const.DOMAIN,
+        domain="number",
     ))
 
     entry = _FakeEntry()

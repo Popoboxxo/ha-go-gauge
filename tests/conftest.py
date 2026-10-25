@@ -209,6 +209,10 @@ def install_ha_stubs() -> None:
     # throwaway class would work as a dict value but makes log/debug output and
     # assertions read wrong, so pin the real value.
     sys.modules["homeassistant.config_entries"].SOURCE_IMPORT = "import"
+    # Same for the reauth source: `__init__.py` passes it as the
+    # `match_context["source"]` of the duplicate-reauth guard, so tests can
+    # assert on the plain string.
+    sys.modules["homeassistant.config_entries"].SOURCE_REAUTH = "reauth"
 
     # Real ``BaseException`` subclasses (not `_Flexible` throwaways): the
     # integration raises/catches ``ConfigEntryAuthFailed`` (reauth) and
@@ -407,6 +411,14 @@ class RegistryEntry:
     ``entity_id`` may be ``None`` - real HA keeps disabled-by-config entries
     without an entity_id, and the sweep must skip them (plan §8.4).
 
+    HA semantics (get this wrong and every adoption filter silently misses):
+    ``platform`` is the INTEGRATION domain (``go_gauge``), NOT an entity
+    domain. ``domain`` is the ENTITY domain (``sensor``,
+    ``binary_sensor``, ``switch``, ``number``). Tests must therefore build
+    legacy entries as ``RegistryEntry(platform=const.DOMAIN,
+    domain="sensor", ...)`` - the inverse (``platform="sensor"``,
+    ``domain="go_gauge"``) is exactly the bug the real instance exposed.
+
     ``eq=False`` keeps the default identity hash so entries stay usable in
     sets/lists of candidates (real HA's RegistryEntry is a frozen dataclass and
     therefore hashable too). All attributes remain mutable on purpose: tests
@@ -493,6 +505,11 @@ class FakeEntityRegistry:
         This is the pre-check of plan §4.6: a canonical unique_id that already
         resolves means the migration must take the loser path instead of
         calling ``async_update_entity(new_unique_id=...)``.
+
+        Mirrors HA's argument order ``(domain, platform, unique_id)`` where
+        ``domain`` is the ENTITY domain (``sensor``, ...) and ``platform`` is
+        the INTEGRATION domain (``go_gauge``) - the storage fields of
+        :class:`RegistryEntry` carry exactly those two values.
         """
         entry = self._find_by_unique_id(domain, platform, unique_id)
         return entry.entity_id if entry is not None else None
@@ -501,8 +518,8 @@ class FakeEntityRegistry:
         """Apply registry changes, mirroring ``EntityRegistry.async_update_entity``.
 
         ``new_unique_id`` writes ``unique_id`` and raises ``ValueError`` when
-        another entry of the same domain+platform already owns it - real HA
-        scopes unique_id uniqueness per platform and domain. The entry's own
+        another entry of the same entity-domain + integration-platform already
+        owns it - real HA scopes unique_id uniqueness that way. The entry's own
         key never blocks itself (self-rename is legal). ``new_entity_id``
         re-keys the store like the real registry does. An unknown `entity_id`
         raises ``KeyError`` (the real registry does too).

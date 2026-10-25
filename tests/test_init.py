@@ -448,6 +448,46 @@ class TestAsyncSetupEntryLogic:
         }
 
     @pytest.mark.asyncio
+    async def test_auth_failed_first_refresh_does_not_abort_setup(self):
+        """[REQ-017] A 401 first refresh keeps the workspace setup alive.
+
+        Regression guard: re-raising ``ConfigEntryAuthFailed`` aborted the setup,
+        so no platform loaded and the ApiStatusSensor could not name the cause.
+        """
+        entry = MagicMock()
+        entry.entry_id = "entry_auth"
+        entry.data = {"token": "expired", "workspace_name": "Auth WS"}
+        entry.options = {}
+
+        hass = MagicMock()
+        hass.data = {}
+        conftest.install_applying_config_entries(hass)
+        hass.config_entries.async_forward_entry_setups = AsyncMock()
+        hass.config_entries.flow.async_progress_by_handler = MagicMock(
+            return_value=[]
+        )
+
+        async def _fail_first_refresh():
+            raise init_module.ConfigEntryAuthFailed("HTTP 401")
+
+        coordinator = MagicMock()
+        coordinator.data = None
+        coordinator.async_config_entry_first_refresh = _fail_first_refresh
+
+        with patch.object(
+            init_module, "GoGaugeCoordinator",
+            MagicMock(return_value=coordinator),
+        ), patch.object(
+            init_module, "async_ensure_account_entry", new_callable=AsyncMock
+        ):
+            assert await init_module.async_setup_entry(hass, entry) is True
+
+        # The runtime is registered (no cleanup before a re-raise) and the
+        # platforms were forwarded so the diagnostic becomes visible.
+        assert hass.data["go_gauge"]["entry_auth"] is coordinator
+        hass.config_entries.async_forward_entry_setups.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_entry_registered_in_domain_registry(self):
         """[AUDIT-P2-11] Entry is registered in hass.data[DOMAIN][entry_id]."""
         entry = MagicMock()

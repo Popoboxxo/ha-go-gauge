@@ -12,11 +12,12 @@ entfallen (plan §2.6/§3.3) - es gibt keinen Besitzerwechsel mehr.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Callable
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
@@ -323,6 +324,93 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+def _usage_only_fallback_snapshot(coordinator: Any) -> dict[str, Any]:
+    """Return the tolerant-path usage snapshot (exact key set, plan §2.7/M3).
+
+    Shared by the transient-error path and the auth-error path so the
+    published shape stays identical: the model catalog lives on the account
+    entry, so no catalog key appears here.
+    """
+    return {
+        "fetched_at": None,
+        "last_usage_fetch": None,
+        "last_usage_ok": None,
+        "last_usage_attempt": None,
+        "last_usage_outcome": None,
+        "auto_usage": coordinator.auto_usage,
+        "usage_refresh_minutes": coordinator.usage_minutes,
+        "workspaces": [],
+    }
+
+
+async def _async_start_reauth(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Start HA's reauth flow for ``entry`` without failing the setup.
+
+    The setup deliberately returns ``True`` for a rejected token (HTTP 401):
+    the platforms must load so ``ApiStatusSensor`` can publish
+    ``auth_error`` with the real cause. HA's reauth UI is started on top of
+    that, so the user sees "token rejected" instead of a bare "unavailable"
+    and can fix it. A reauth problem is therefore never a setup failure.
+
+    Idempotent on purpose: HA may already have started a flow itself (it does
+    when a coordinator raises ``ConfigEntryAuthFailed``), so a matching flow in
+    progress means "do nothing". The progress lookup is restricted to a real
+    list result - an absent/raising API or a test double hands control to the
+    starter instead of silently suppressing the reauth. Every step is guarded:
+    this helper must never break the already successful setup.
+    """
+    progress = getattr(
+        getattr(hass.config_entries, "flow", None),
+        "async_progress_by_handler",
+        None,
+    )
+    if callable(progress):
+        try:
+            active = progress(
+                DOMAIN,
+                match_context={
+                    "source": SOURCE_REAUTH,
+                    "entry_id": entry.entry_id,
+                },
+            )
+        except Exception as err:  # noqa: BLE001 - start defensively then
+            _LOGGER.debug(
+                "Go Gauge: Reauth-Fortschritt fuer %s nicht lesbar (%s) - "
+                "Reauth wird trotzdem gestartet",
+                entry.entry_id,
+                err,
+            )
+        else:
+            if isinstance(active, (list, tuple, set, frozenset)) and active:
+                _LOGGER.debug(
+                    "Go Gauge: Reauth fuer %s laeuft bereits - kein zweiter "
+                    "Start",
+                    entry.entry_id,
+                )
+                return
+
+    starter = getattr(entry, "async_start_reauth", None)
+    if not callable(starter):
+        _LOGGER.debug(
+            "Go Gauge: Entry %s kennt async_start_reauth nicht - Setup bleibt "
+            "aktiv",
+            entry.entry_id,
+        )
+        return
+
+    try:
+        result = starter(hass)
+        if inspect.isawaitable(result):
+            await result
+    except Exception as err:  # noqa: BLE001 - never fail the setup for this
+        _LOGGER.warning(
+            "Go Gauge: Reauth-Start fuer %s fehlgeschlagen (%s) - Setup bleibt "
+            "aktiv",
+            entry.entry_id,
+            err,
+        )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up one Go Gauge entry - account or workspace (2.0.0)."""
     if conf_entry_kind(entry.data) == ENTRY_KIND_ACCOUNT:
@@ -339,36 +427,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # First refresh TOLERANT: Wenn der erste Abruf fehlschlaegt (Cloudflare/
     # Netz beim HA-Start), darf das Setup NICHT abbrechen - sonst bleiben alle
     # Entities "nicht verfuegbar" bis zum naechsten Neustart. HA's Coordinator
-    # retryt automatisch im Hintergrund.
+    # retryt automatisch im Hintergrund. Dasselbe gilt fuer einen 401: die
+    # Plattformen muessen laden, damit der ApiStatusSensor den Grund
+    # ("auth_error") anzeigen kann - die Reauth-UI startet danach.
+    auth_failed = False
     try:
         await coordinator.async_config_entry_first_refresh()
     except ConfigEntryAuthFailed:
-        # Token ungueltig/abgelaufen: HA muss die Reauth-UI starten. Den
-        # koordinator (falls bereits registriert) aus der Registry entfernen
-        # und das Signal weiterreichen - NICHT im toleranten Pfad unten
-        # verschlucken, sonst bliebe die Integration still auf Alt-Daten
-        # stehen statt den Nutzer zur Neu-Anmeldung zu fuehren.
-        domain_data = hass.data.get(DOMAIN)
-        if isinstance(domain_data, dict):
-            domain_data.pop(entry.entry_id, None)
-        raise
+        # Token ungueltig/abgelaufen: NICHT weiterreichen (sonst laedt keine
+        # Plattform und der Nutzer sieht nur "unavailable") und den
+        # Coordinator NICHT entfernen - er wird erst unten registriert.
+        auth_failed = True
+        _LOGGER.warning(
+            "Go Gauge %s: API-Token abgelehnt (HTTP 401) - Reauth wird "
+            "gestartet, Setup laeuft weiter", ws_name or "WS")
+        # Der Coordinator publiziert im Auth-Pfad bereits einen Snapshot mit
+        # status="auth_error"/last_update_success=False. Den NUR dann durch
+        # den Fallback ersetzen, wenn er fehlt (Test-Doubles, Fremd-Coordinator).
+        if not isinstance(getattr(coordinator, "data", None), dict):
+            coordinator.async_set_updated_data(
+                _usage_only_fallback_snapshot(coordinator)
+            )
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning(
             "Go Gauge %s: erster Abruf fehlgeschlagen (%s) - Setup laeuft weiter, "
             "HA retryt automatisch", ws_name or "WS", err)
-        # data initialisieren, damit Sensoren nicht auf None laufen. Key-Set
-        # exakt wie im echten Usage-Snapshot (2.0.0, plan §2.7/M3): der
-        # Modell-Katalog lebt auf der Konto-Entry, nicht hier.
-        coordinator.async_set_updated_data({
-            "fetched_at": None,
-            "last_usage_fetch": None,
-            "last_usage_ok": None,
-            "last_usage_attempt": None,
-            "last_usage_outcome": None,
-            "auto_usage": coordinator.auto_usage,
-            "usage_refresh_minutes": coordinator.usage_minutes,
-            "workspaces": [],
-        })
+        # data initialisieren, damit Sensoren nicht auf None laufen.
+        coordinator.async_set_updated_data(
+            _usage_only_fallback_snapshot(coordinator)
+        )
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
@@ -378,6 +465,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # settings live through the coordinator setters and must never reload
     # (plan §6.4). That is also why there is no owner hand-over any more.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    if auth_failed:
+        # Erst nach dem Forward: die Plattformen sind geladen (auth_error ist
+        # sichtbar), HA startet die Reauth-UI im Anschluss. Ein Fehler hier
+        # darf das erfolgreiche Setup nicht kippen (_async_start_reauth faengt).
+        await _async_start_reauth(hass, entry)
 
     # 2.0.0: a workspace becoming ready is the trigger that creates/loads the
     # singleton account entry (plan §3.1/§7.3). Tolerant on purpose - a failure

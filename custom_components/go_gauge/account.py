@@ -1066,7 +1066,7 @@ def _note_moved(report: AdoptionReport, entity_id: str | None) -> None:
 
 
 def _canonical_blocker(
-    ent_reg: Any, platform: str, canonical: str, winner: Any
+    ent_reg: Any, entity_domain: str, canonical: str, winner: Any
 ) -> Any | None:
     """Return the entry that already owns ``canonical``, if it is not the winner.
 
@@ -1078,11 +1078,16 @@ def _canonical_blocker(
     * a second scan covers disabled-by-config entries: they have
       ``entity_id is None``, so ``async_get_entity_id`` cannot report them, but
       the registry entry still occupies the unique_id.
+
+    HA semantics trap (the bug this parameter rename exists for): a
+    ``RegistryEntry`` carries ``platform`` = the INTEGRATION domain
+    (``go_gauge``) and ``domain`` = the ENTITY domain (``sensor``,
+    ``binary_sensor``, ...). ``async_get_entity_id`` takes them in the order
+    ``(domain, platform, unique_id)`` - the entity domain first. Swapping the
+    two makes every lookup miss and the whole adoption a silent no-op.
     """
     try:
-        # Real HA signature is ``(domain, platform, unique_id)`` - not
-        # ``(platform, domain, ...)`` as plan §4.6 sketches it.
-        occupant = ent_reg.async_get_entity_id(DOMAIN, platform, canonical)
+        occupant = ent_reg.async_get_entity_id(entity_domain, DOMAIN, canonical)
     except Exception:  # noqa: BLE001 - fall through to the entry scan
         occupant = None
     if occupant and occupant != getattr(winner, "entity_id", None):
@@ -1091,9 +1096,9 @@ def _canonical_blocker(
     for other in ent_reg.entities.values():
         if other is winner:
             continue
-        if getattr(other, "platform", None) != platform:
+        if getattr(other, "platform", None) != DOMAIN:
             continue
-        if getattr(other, "domain", None) != DOMAIN:
+        if getattr(other, "domain", None) != entity_domain:
             continue
         if getattr(other, "unique_id", None) != canonical:
             continue
@@ -1177,7 +1182,7 @@ def _sweep_entities(
     ent_reg: Any,
     *,
     kinds: tuple[str, ...],
-    platform_by_kind: dict[str, str],
+    entity_domain_by_kind: dict[str, str],
     canonical_unique_id: Any,
     device_id: str | None,
 ) -> set[str]:
@@ -1185,9 +1190,14 @@ def _sweep_entities(
 
     Per kind (plan §4.1/§4.2/§4.3):
 
-    1. collect the candidates via ``platform`` + ``unique_id`` (canonical OR
-       legacy suffix, so both ``account_<kind>`` and ``<any entry>_<kind>`` are
-       found; ``config_entry_id is None`` is included),
+    1. collect the candidates via the INTEGRATION platform + entity domain +
+       ``unique_id`` (canonical OR legacy suffix, so both ``account_<kind>`` and
+       ``<any entry>_<kind>`` are found; ``config_entry_id is None`` is
+       included). Careful with HA's field names: ``RegistryEntry.platform`` is
+       the integration domain (``DOMAIN`` = ``go_gauge``) while
+       ``RegistryEntry.domain`` is the entity domain (``sensor``,
+       ``binary_sensor``, ...) - ``entity_domain_by_kind`` therefore supplies
+       the LATTER, never a platform name.
     2. skip disabled-by-config entries (``entity_id is None``) - they cannot be
        adopted, but they DO occupy their unique_id (see ``_canonical_blocker``),
     3. pick the deterministic winner, run the winner predicates (unique_id ->
@@ -1203,15 +1213,15 @@ def _sweep_entities(
     candidate_device_ids: set[str] = set()
 
     for kind in kinds:
-        platform = platform_by_kind[kind]
+        entity_domain = entity_domain_by_kind[kind]
         canonical = canonical_unique_id(kind)
         collision_issue_id = f"account_entity_collision_{kind}"
 
         candidates = [
             candidate
             for candidate in ent_reg.entities.values()
-            if getattr(candidate, "platform", None) == platform
-            and getattr(candidate, "domain", None) == DOMAIN
+            if getattr(candidate, "platform", None) == DOMAIN
+            and getattr(candidate, "domain", None) == entity_domain
             and getattr(candidate, "unique_id", None)
             and (
                 candidate.unique_id == canonical
@@ -1252,7 +1262,7 @@ def _sweep_entities(
             ),
         )
 
-        blocker = _canonical_blocker(ent_reg, platform, canonical, winner)
+        blocker = _canonical_blocker(ent_reg, entity_domain, canonical, winner)
         if blocker is None:
             try:
                 _adopt_winner(ent_reg, entry, report, canonical, winner, device_id)
@@ -1317,13 +1327,27 @@ def _sweep_entities(
 
 
 def _canonical_device(dev_reg: Any) -> Any | None:
-    """Return the device carrying ``(DOMAIN, ACCOUNT_DEVICE_IDENTIFIER)``."""
+    """Return the device carrying ``(DOMAIN, ACCOUNT_DEVICE_IDENTIFIER)``.
+
+    ``DeviceRegistry.async_get_device`` is deprecated and removed in HA 2027.8,
+    so the device is resolved by iterating the registry instead. Identifiers are
+    stable for the canonical account device; should more than one device carry
+    the identifier (registry drift), the smallest ``id`` wins so the choice is
+    deterministic across runs. A registry without a usable ``devices`` mapping
+    or any lookup error is a normal "no device" state - never a setup failure.
+    """
+    identifier = (DOMAIN, ACCOUNT_DEVICE_IDENTIFIER)
     try:
-        return dev_reg.async_get_device(
-            identifiers={(DOMAIN, ACCOUNT_DEVICE_IDENTIFIER)}
-        )
+        matches = [
+            device
+            for device in dev_reg.devices.values()
+            if identifier in getattr(device, "identifiers", set())
+        ]
     except Exception:  # noqa: BLE001 - missing device is a normal state
         return None
+    if not matches:
+        return None
+    return min(matches, key=lambda device: str(getattr(device, "id", "")))
 
 
 def _workspace_device_identifiers(
@@ -1659,6 +1683,10 @@ def async_remove_legacy_model_settings(hass: HomeAssistant) -> int:
     Returns the number of removed entries and is idempotent: a second pass
     finds no candidate and removes nothing. Every removal is guarded on its
     own, so one failing entry cannot abort the adoption (plan §4.6).
+
+    HA semantics: ``RegistryEntry.platform`` is the integration domain
+    (``go_gauge``) and ``RegistryEntry.domain`` is the entity domain
+    (``switch``/``number``). The predicates below reflect that order.
     """
     removed = 0
     try:
@@ -1672,9 +1700,12 @@ def async_remove_legacy_model_settings(hass: HomeAssistant) -> int:
 
     for candidate in candidates:
         try:
-            if getattr(candidate, "platform", None) not in {"switch", "number"}:
+            # HA field names (see _canonical_blocker): ``platform`` is the
+            # integration domain, ``domain`` is the entity domain. Checking
+            # them the other way round removed nothing at all.
+            if getattr(candidate, "platform", None) != DOMAIN:
                 continue
-            if getattr(candidate, "domain", None) != DOMAIN:
+            if getattr(candidate, "domain", None) not in {"switch", "number"}:
                 continue
             unique_id = getattr(candidate, "unique_id", None)
             if not isinstance(unique_id, str):
@@ -1728,6 +1759,11 @@ def _adopt_registries(
         canonical_unique_id,
     )
 
+    # ``PLATFORM_BY_KIND`` maps a kind to its ENTITY domain ("sensor",
+    # "binary_sensor") - NOT to an integration platform. The sweep filters on
+    # ``RegistryEntry.domain`` with it and on ``RegistryEntry.platform`` with
+    # ``DOMAIN`` (see _canonical_blocker for the HA semantics trap).
+
     device = _canonical_device(dev_reg)
     device_id = str(getattr(device, "id", "")) if device is not None else None
 
@@ -1737,7 +1773,7 @@ def _adopt_registries(
         report,
         ent_reg,
         kinds=ACCOUNT_ENTITY_KINDS,
-        platform_by_kind=PLATFORM_BY_KIND,
+        entity_domain_by_kind=PLATFORM_BY_KIND,
         canonical_unique_id=canonical_unique_id,
         device_id=device_id,
     )

@@ -25,6 +25,7 @@ import asyncio
 import importlib.util
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -207,6 +208,13 @@ class _StubCoordinator(coord.GoGaugeCoordinator):
         self.last_usage_outcome = None
         self.data = data
         self.last_update_success = True
+
+
+class _AuthPublishingCoordinator(_StubCoordinator):
+    """First refresh runs the REAL auth path (publishes, then raises)."""
+
+    async def async_config_entry_first_refresh(self) -> None:
+        await self._async_update_data()
 
 
 # ---------------------------------------------------------------------------
@@ -439,33 +447,181 @@ async def test_reauth_confirm_without_entry_aborts_reauth_failed():
 
 
 # ---------------------------------------------------------------------------
-# [REQ-017] async_setup_entry auth propagation
+# [REQ-017] async_setup_entry auth handling (401 never fails the setup)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_setup_entry_reraises_auth_failed_and_cleans_registry():
-    """[REQ-017] First refresh auth failure re-raises and drops the entry."""
+def _auth_setup_hass(*, reauth_in_progress: bool = False) -> MagicMock:
+    """``hass`` double with the flow manager the reauth guard reads."""
+    hass = MagicMock()
+    hass.data = {}
+    hass.config_entries.async_forward_entry_setups = AsyncMock()
+    hass.config_entries.flow.async_progress_by_handler = MagicMock(
+        return_value=(
+            [{"flow_id": "flow-1",
+              "context": {"source": "reauth", "entry_id": "entry-auth"}}]
+            if reauth_in_progress
+            else []
+        )
+    )
+    return hass
+
+
+def _auth_setup_entry(*, start_reauth: Any = None) -> MagicMock:
+    """Workspace ConfigEntry double wired for the setup path."""
     entry = MagicMock()
     entry.entry_id = "entry-auth"
     entry.data = {"token": "expired", "workspace_name": "WS"}
     entry.options = {}
+    entry.async_start_reauth = (
+        start_reauth if start_reauth is not None else AsyncMock()
+    )
+    return entry
 
-    hass = MagicMock()
-    hass.data = {"go_gauge": {"entry-auth": MagicMock()}}
+
+def _failing_coordinator(coordinator: Any) -> Any:
+    """Give ``coordinator`` a first refresh that raises ``ConfigEntryAuthFailed``."""
 
     async def _fail_first_refresh():
         raise init_module.ConfigEntryAuthFailed("HTTP 401")
 
-    coordinator = MagicMock()
     coordinator.async_config_entry_first_refresh = _fail_first_refresh
+    return coordinator
 
-    with patch.object(init_module, "GoGaugeCoordinator",
-                      MagicMock(return_value=coordinator)):
-        with pytest.raises(init_module.ConfigEntryAuthFailed):
-            await init_module.async_setup_entry(hass, entry)
 
-    # Cleaned up for reauth, not silently swallowed into the tolerant path.
-    assert "entry-auth" not in hass.data["go_gauge"]
+def _patch_setup(coordinator: Any):
+    """Patch the coordinator factory and the account bootstrap for a setup run."""
+    return (
+        patch.object(
+            init_module, "GoGaugeCoordinator",
+            MagicMock(return_value=coordinator),
+        ),
+        patch.object(
+            init_module, "async_ensure_account_entry", new_callable=AsyncMock
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_auth_failed_stays_true_and_starts_reauth():
+    """[REQ-017] A 401 first refresh -> setup True, platforms load, reauth starts.
+
+    Regression guard for the old contract (re-raise): HA then aborted the setup,
+    no platform loaded and ``sensor.*_api_status`` was merely ``unavailable``
+    instead of naming ``auth_error``.
+    """
+    hass = _auth_setup_hass()
+    entry = _auth_setup_entry()
+
+    coordinator = MagicMock()
+    coordinator.data = None
+    coordinator.auto_usage = True
+    coordinator.usage_minutes = 10
+    _failing_coordinator(coordinator)
+
+    coordinator_patch, ensure_patch = _patch_setup(coordinator)
+    with coordinator_patch, ensure_patch:
+        result = await init_module.async_setup_entry(hass, entry)
+
+    assert result is True
+    hass.config_entries.async_forward_entry_setups.assert_awaited_once()
+    # The runtime object IS registered (the old code removed it before raising).
+    assert hass.data["go_gauge"]["entry-auth"] is coordinator
+    entry.async_start_reauth.assert_awaited_once_with(hass)
+    # No published snapshot -> the tolerant usage-only fallback fills the gap.
+    coordinator.async_set_updated_data.assert_called_once()
+    assert set(coordinator.async_set_updated_data.call_args.args[0]) == {
+        "fetched_at",
+        "last_usage_fetch",
+        "last_usage_ok",
+        "last_usage_attempt",
+        "last_usage_outcome",
+        "auto_usage",
+        "usage_refresh_minutes",
+        "workspaces",
+    }
+    hass.config_entries.flow.async_progress_by_handler.assert_called_once_with(
+        const.DOMAIN,
+        match_context={
+            "source": init_module.SOURCE_REAUTH,
+            "entry_id": "entry-auth",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_auth_failed_keeps_published_auth_snapshot():
+    """[REQ-017] The coordinator's own ``auth_error`` snapshot is not overwritten."""
+    hass = _auth_setup_hass()
+    entry = _auth_setup_entry()
+
+    published = {"workspaces": [{"key": "ws1", "status": "auth_error"}]}
+    coordinator = MagicMock()
+    coordinator.data = published
+    coordinator.auto_usage = True
+    coordinator.usage_minutes = 10
+    _failing_coordinator(coordinator)
+
+    coordinator_patch, ensure_patch = _patch_setup(coordinator)
+    with coordinator_patch, ensure_patch:
+        assert await init_module.async_setup_entry(hass, entry) is True
+
+    coordinator.async_set_updated_data.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_does_not_start_a_second_reauth_flow():
+    """[REQ-017] A reauth flow already in progress is never started twice."""
+    hass = _auth_setup_hass(reauth_in_progress=True)
+    entry = _auth_setup_entry()
+
+    coordinator = _failing_coordinator(MagicMock())
+
+    coordinator_patch, ensure_patch = _patch_setup(coordinator)
+    with coordinator_patch, ensure_patch:
+        assert await init_module.async_setup_entry(hass, entry) is True
+
+    entry.async_start_reauth.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_survives_a_failing_reauth_start():
+    """[REQ-017] A broken reauth start never flips the successful setup."""
+    hass = _auth_setup_hass()
+    entry = _auth_setup_entry(
+        start_reauth=MagicMock(side_effect=RuntimeError("flow manager down"))
+    )
+
+    coordinator = _failing_coordinator(MagicMock())
+
+    coordinator_patch, ensure_patch = _patch_setup(coordinator)
+    with coordinator_patch, ensure_patch:
+        assert await init_module.async_setup_entry(hass, entry) is True
+
+    entry.async_start_reauth.assert_called_once_with(hass)
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_auth_failure_leaves_api_status_sensor_named():
+    """[REQ-017] After the tolerant 401 setup the diagnostic says ``auth_error``."""
+    hass = _auth_setup_hass()
+    entry = _auth_setup_entry()
+
+    coordinator = _AuthPublishingCoordinator(
+        _StubClient(exc=const.GoGaugeAuthError("HTTP 401 - token invalid/expired"))
+    )
+
+    coordinator_patch, ensure_patch = _patch_setup(coordinator)
+    with coordinator_patch, ensure_patch:
+        assert await init_module.async_setup_entry(hass, entry) is True
+
+    assert coordinator.last_update_success is False
+    sensor_entry = conftest.StrictConfigEntry(entry_id="entry-auth")
+    status_sensor = sensor_module.ApiStatusSensor(
+        coordinator, sensor_entry, key="ws1"
+    )
+
+    assert status_sensor.available is True
+    assert status_sensor.native_value == "auth_error"
 
 
 if __name__ == "__main__":

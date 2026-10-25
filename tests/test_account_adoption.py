@@ -198,12 +198,15 @@ def _seed_legacy(
     """
     created: dict[str, conftest.RegistryEntry] = {}
     for kind in order or account_logic.ACCOUNT_ENTITY_KINDS:
-        platform, entity_id = _ENTITY_FIXTURES[kind]
+        # `_ENTITY_FIXTURES` carries the ENTITY domain ("sensor"/
+        # "binary_sensor"), which is `RegistryEntry.domain`. `platform` is the
+        # integration domain - never the other way round (HA semantics).
+        entity_domain, entity_id = _ENTITY_FIXTURES[kind]
         entry = conftest.RegistryEntry(
             entity_id=entity_id,
             unique_id=f"{owner_entry_id or 'orphan'}_{kind}",
-            platform=platform,
-            domain=const.DOMAIN,
+            platform=const.DOMAIN,
+            domain=entity_domain,
             config_entry_id=owner_entry_id,
             device_id=(device_ids or {}).get(kind, CANONICAL_DEVICE_ID),
             id=f"registry-{kind}",
@@ -300,8 +303,8 @@ async def test_entity_without_entity_id_is_skipped(hass, registries):
     orphan = conftest.RegistryEntry(
         entity_id=None,
         unique_id="ghost_model_catalog",
-        platform="sensor",
-        domain=const.DOMAIN,
+        platform=const.DOMAIN,
+        domain="sensor",
         config_entry_id=OWNER_ENTRY_ID,
         device_id=None,
         id="registry-ghost",
@@ -432,8 +435,8 @@ def _seed_collision(
     canonical = conftest.RegistryEntry(
         entity_id="sensor.account_models",
         unique_id="account_model_catalog",
-        platform="sensor",
-        domain=const.DOMAIN,
+        platform=const.DOMAIN,
+        domain="sensor",
         config_entry_id=ACCOUNT_ENTRY_ID,
         device_id=CANONICAL_DEVICE_ID,
         id="registry-canonical",
@@ -441,8 +444,8 @@ def _seed_collision(
     legacy = conftest.RegistryEntry(
         entity_id="sensor.ws_model_catalog",
         unique_id=f"{OWNER_ENTRY_ID}_model_catalog",
-        platform="sensor",
-        domain=const.DOMAIN,
+        platform=const.DOMAIN,
+        domain="sensor",
         config_entry_id=OWNER_ENTRY_ID,
         device_id=CANONICAL_DEVICE_ID,
         id="registry-legacy",
@@ -511,8 +514,8 @@ async def test_disabled_canonical_holder_blocks_the_rename(hass, registries):
         conftest.RegistryEntry(
             entity_id=None,
             unique_id="account_model_catalog",
-            platform="sensor",
-            domain=const.DOMAIN,
+            platform=const.DOMAIN,
+            domain="sensor",
             config_entry_id=OWNER_ENTRY_ID,
             id="registry-holder",
         )
@@ -521,8 +524,8 @@ async def test_disabled_canonical_holder_blocks_the_rename(hass, registries):
         conftest.RegistryEntry(
             entity_id="sensor.ws_model_catalog",
             unique_id=f"{OWNER_ENTRY_ID}_model_catalog",
-            platform="sensor",
-            domain=const.DOMAIN,
+            platform=const.DOMAIN,
+            domain="sensor",
             config_entry_id=OWNER_ENTRY_ID,
             device_id=CANONICAL_DEVICE_ID,
             id="registry-legacy",
@@ -640,8 +643,8 @@ async def test_device_duplicate_not_empty_keeps_device_and_reports(hass, registr
         conftest.RegistryEntry(
             entity_id="sensor.ws_usage",
             unique_id=f"{OWNER_ENTRY_ID}_usage",
-            platform="sensor",
-            domain=const.DOMAIN,
+            platform=const.DOMAIN,
+            domain="sensor",
             config_entry_id=OWNER_ENTRY_ID,
             device_id="dev-with-entity",
         )
@@ -692,8 +695,8 @@ async def test_workspace_device_is_never_treated_as_duplicate(hass, registries):
         conftest.RegistryEntry(
             entity_id="sensor.go_gauge_honcho_usage",
             unique_id=f"{OWNER_ENTRY_ID}_usage",
-            platform="sensor",
-            domain=const.DOMAIN,
+            platform=const.DOMAIN,
+            domain="sensor",
             config_entry_id=OWNER_ENTRY_ID,
             device_id="dev-workspace",
         )
@@ -733,8 +736,8 @@ async def test_device_move_never_falls_back_to_a_workspace_device(hass, registri
     usage_entity = conftest.RegistryEntry(
         entity_id="sensor.go_gauge_honcho_usage",
         unique_id=f"{OWNER_ENTRY_ID}_usage",
-        platform="sensor",
-        domain=const.DOMAIN,
+        platform=const.DOMAIN,
+        domain="sensor",
         config_entry_id=OWNER_ENTRY_ID,
         device_id="dev-workspace",
     )
@@ -964,6 +967,134 @@ async def test_adoption_is_wired_into_setup(hass, registries, monkeypatch):
     )
 
     assert await account.async_setup_account_entry(hass, entry) is True
+
+
+# ============================================================================
+# Real HA registry semantics (E2E 2026-10-25 regressions)
+# ============================================================================
+#
+# The live instance exposed that ``RegistryEntry.platform`` is the INTEGRATION
+# domain (``go_gauge``) and ``RegistryEntry.domain`` the ENTITY domain
+# (``sensor``/``binary_sensor``). The sweep filtered the two the other way
+# round, found no candidate at all and every legacy entity was deleted by the
+# following device hand-over. These tests fail against the inverted filters."
+
+@pytest.mark.asyncio
+async def test_sweep_finds_legacy_entities_with_real_ha_semantics(
+    hass, registries
+):
+    """[E2E-2026-10-25] The sweep adopts all five entities of the real layout.
+
+    Seeds ``platform=DOMAIN``/``domain=<entity domain>`` exactly like HA stores
+    them, then proves the full chain: unique_id -> config_entry_id -> device,
+    and - the part the live run lost - that no entity is removed and every
+    ``entity_id`` (and therefore its history) survives the device move.
+    """
+    _seed_account_device(registries, owners={OWNER_ENTRY_ID})
+    seeded = _seed_legacy(registries)
+    entity_ids_before = {
+        kind: entry.entity_id for kind, entry in seeded.items()
+    }
+
+    report = await account.async_adopt_account_entities(hass, _entry())
+
+    assert report.errors == []
+    assert report.renamed, "real-layout candidates must be found and renamed"
+    for kind in account_logic.ACCOUNT_ENTITY_KINDS:
+        canonical = account_logic.canonical_unique_id(kind)
+        adopted = _by_unique_id(registries.entity, canonical)
+        assert adopted is not None, f"{kind}: not adopted"
+        assert adopted.config_entry_id == ACCOUNT_ENTRY_ID
+        assert adopted.device_id == CANONICAL_DEVICE_ID
+        assert adopted.entity_id == entity_ids_before[kind]
+        assert adopted.disabled_by is None
+
+    # The device hand-over must not take a single entity with it.
+    assert registries.entity.remove_calls == []
+    assert registries.device.remove_calls == []
+    assert registries.device.devices[CANONICAL_DEVICE_ID].config_entries == {
+        ACCOUNT_ENTRY_ID
+    }
+    assert len(registries.entity.entities) == 5
+
+
+def test_canonical_blocker_uses_ha_lookup_signature(registries):
+    """[E2E-2026-10-25] ``async_get_entity_id`` gets ``(domain, platform, uid)``.
+
+    Spying on the argument order is the point: the inverted call silently
+    returns ``None`` in HA and lets a rename collide with ``ValueError``.
+    """
+    calls: list[tuple[str, str, str]] = []
+
+    def _spy(domain: str, platform: str, unique_id: str):
+        calls.append((domain, platform, unique_id))
+        assert platform == const.DOMAIN, (
+            "second argument must be the INTEGRATION domain"
+        )
+        assert domain == "sensor", "first argument must be the ENTITY domain"
+        return None
+
+    registries.entity.async_get_entity_id = _spy
+    winner = registries.entity.add(conftest.RegistryEntry(
+        entity_id="sensor.ws_model_catalog",
+        unique_id=f"{OWNER_ENTRY_ID}_model_catalog",
+        platform=const.DOMAIN,
+        domain="sensor",
+    ))
+
+    blocker = account._canonical_blocker(
+        registries.entity, "sensor", "account_model_catalog", winner
+    )
+
+    assert blocker is None
+    assert calls == [("sensor", const.DOMAIN, "account_model_catalog")]
+
+    # Second scenario: a real holder of the canonical unique_id -> loser path.
+    holder = registries.entity.add(conftest.RegistryEntry(
+        entity_id="sensor.account_models",
+        unique_id="account_model_catalog",
+        platform=const.DOMAIN,
+        domain="sensor",
+    ))
+    blocker = account._canonical_blocker(
+        registries.entity, "sensor", "account_model_catalog", winner
+    )
+    assert blocker is holder
+
+
+def test_no_deprecated_device_lookup():
+    """[HA 2027.8] ``async_get_device`` is gone - resolve via ``devices``.
+
+    The registry double deliberately raises on any attribute access other than
+    ``devices``, so a leftover ``async_get_device`` call cannot pass unseen.
+    Two identifier matches resolve deterministically (smallest ``id``).
+    """
+
+    class _DevicesOnly:
+        """``DeviceRegistry`` surface reduced to the supported iteration."""
+
+        def __init__(self, devices: dict[str, Any]) -> None:
+            self.devices = devices
+
+        def __getattr__(self, name: str):
+            raise AssertionError(f"deprecated/unsupported access: {name}")
+
+    identifier = (const.DOMAIN, const.ACCOUNT_DEVICE_IDENTIFIER)
+    devices = {
+        "zzz": conftest.DeviceEntry(id="zzz", identifiers={identifier}),
+        "aaa": conftest.DeviceEntry(id="aaa", identifiers={identifier}),
+        "other": conftest.DeviceEntry(
+            id="other", identifiers={(const.DOMAIN, "ws")}
+        ),
+    }
+
+    found = account._canonical_device(_DevicesOnly(devices))
+
+    assert found is not None
+    assert found.id == "aaa", "the smallest id must win deterministically"
+    assert account._canonical_device(_DevicesOnly({})) is None
+    # A registry without the expected surface stays a normal "no device".
+    assert account._canonical_device(object()) is None
 
 
 if __name__ == "__main__":
