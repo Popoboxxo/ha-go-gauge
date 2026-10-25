@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Unit tests for coordinator.py kernel functions.
+"""Unit tests for the coordinator kernel plus the HA-free ``catalog``/``api``.
 
 Tests the core parsing, aggregation, and API-client logic that handles:
-- fetch_usage/fetch_models (async HTTP with mocked responses)
-- _parse_reset (datetime parsing with ISO8601 + edge cases)
-- build_models_block (model ranking/catalog aggregation)
-- efficiency/_pnum (cost-benefit ratio calculations, Peak/Off-Peak averaging)
+- fetch_usage/fetch_models (async HTTP with mocked responses, ``api.py``)
+- _parse_reset (datetime parsing with ISO8601 + edge cases, ``coordinator.py``)
+- build_models_block (model ranking/catalog aggregation, ``catalog.py``)
+- efficiency/_pnum (cost-benefit ratio calculations, Peak/Off-Peak averaging,
+  ``catalog.py``)
 
 Focus: argument order validation (v0.6.1-bug prevention) and field-mapping
 correctness (rolling↔5h, weekly↔week, monthly↔month).
@@ -88,6 +89,8 @@ def _load(name: str, path: str):
 
 
 const = _load("go_gauge.const", str(BASE / "const.py"))
+api = _load("go_gauge.api", str(BASE / "api.py"))
+catalog = _load("go_gauge.catalog", str(BASE / "catalog.py"))
 coord = _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 
 
@@ -97,33 +100,33 @@ coord = _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 
 def test_pnum_returns_scalar_unchanged():
     """[REQ-006] _pnum(5.0) should return 5.0 as-is."""
-    assert coord._pnum(5.0) == 5.0
-    assert coord._pnum(42) == 42
-    assert coord._pnum(0) == 0
+    assert catalog._pnum(5.0) == 5.0
+    assert catalog._pnum(42) == 42
+    assert catalog._pnum(0) == 0
 
 
 def test_pnum_averages_tuple():
     """[REQ-006] _pnum((2.0, 8.0)) should return 5.0 (mean)."""
-    assert coord._pnum((2.0, 8.0)) == 5.0
-    assert coord._pnum([2.0, 8.0]) == 5.0  # lists also work
+    assert catalog._pnum((2.0, 8.0)) == 5.0
+    assert catalog._pnum([2.0, 8.0]) == 5.0  # lists also work
 
 
 def test_pnum_averages_multi_element_tuple():
     """[REQ-006] _pnum with 3+ elements should average all numeric values."""
-    result = coord._pnum((1.0, 2.0, 3.0))
+    result = catalog._pnum((1.0, 2.0, 3.0))
     assert result == 2.0  # (1+2+3)/3
 
 
 def test_pnum_returns_none_for_non_numeric():
     """[REQ-006] _pnum('abc') or _pnum(None) should return None."""
-    assert coord._pnum("abc") is None
-    assert coord._pnum(None) is None
-    assert coord._pnum([]) is None  # empty list
+    assert catalog._pnum("abc") is None
+    assert catalog._pnum(None) is None
+    assert catalog._pnum([]) is None  # empty list
 
 
 def test_pnum_filters_non_numeric_in_tuple():
     """[REQ-006] _pnum ignores non-numeric items in tuples."""
-    result = coord._pnum((2.0, "skip", 8.0))
+    result = catalog._pnum((2.0, "skip", 8.0))
     assert result == 5.0  # (2+8)/2
 
 
@@ -134,7 +137,7 @@ def test_pnum_filters_non_numeric_in_tuple():
 def test_efficiency_scalar_prices():
     """[REQ-007] efficiency with scalar prices: mixed=80%in + 20%out."""
     prices = {"in": 2.0, "out": 6.0, "req": [120, 300, 600]}
-    result = coord.efficiency(prices)
+    result = catalog.efficiency(prices)
     # mixed = 0.8*2.0 + 0.2*6.0 = 1.6 + 1.2 = 2.8
     assert result["usd_per_1m_mixed"] == 2.8
     # month_req_per_usd = 600 / 60 = 10.0
@@ -145,7 +148,7 @@ def test_efficiency_scalar_prices():
 def test_efficiency_peak_offpeak_prices():
     """[REQ-007] efficiency averages Peak/Off-Peak tuples before mixing."""
     prices = {"in": (0.20, 0.40), "out": (1.20, 1.80), "req": [2050, 5100, 10250]}
-    result = coord.efficiency(prices)
+    result = catalog.efficiency(prices)
     # _pnum((0.20, 0.40)) = 0.30, _pnum((1.20, 1.80)) = 1.50
     # mixed = 0.8*0.30 + 0.2*1.50 = 0.24 + 0.30 = 0.54
     assert result["usd_per_1m_mixed"] == 0.54
@@ -157,7 +160,7 @@ def test_efficiency_peak_offpeak_prices():
 def test_efficiency_free_model():
     """[REQ-007] efficiency marks free models with free=True, usd=0, req=None."""
     prices = {"free": True}
-    result = coord.efficiency(prices)
+    result = catalog.efficiency(prices)
     assert result["usd_per_1m_mixed"] == 0.0
     assert result["month_req_per_usd"] is None
     assert result["free"] is True
@@ -165,13 +168,13 @@ def test_efficiency_free_model():
 
 def test_efficiency_none_prices():
     """[REQ-007] efficiency(None) returns None."""
-    assert coord.efficiency(None) is None
+    assert catalog.efficiency(None) is None
 
 
 def test_efficiency_missing_in_out_fields():
     """[REQ-007] efficiency with missing 'in'/'out' fields returns None for mixed."""
     prices = {"req": [100, 200, 300]}  # no 'in' or 'out'
-    result = coord.efficiency(prices)
+    result = catalog.efficiency(prices)
     assert result["usd_per_1m_mixed"] is None
     # But req-based calculation should still work
     assert result["month_req_per_usd"] == 5.0
@@ -180,7 +183,7 @@ def test_efficiency_missing_in_out_fields():
 def test_efficiency_missing_req_field():
     """[REQ-007] efficiency with missing 'req' field still calculates mixed."""
     prices = {"in": 1.0, "out": 2.0}  # no 'req'
-    result = coord.efficiency(prices)
+    result = catalog.efficiency(prices)
     assert result["usd_per_1m_mixed"] == 1.2  # 0.8*1 + 0.2*2
     assert result["month_req_per_usd"] is None
 
@@ -188,11 +191,11 @@ def test_efficiency_missing_req_field():
 def test_efficiency_zero_req_month_element():
     """[REQ-007] efficiency with req[2]=0 or None gives month_req=None."""
     prices = {"in": 1.0, "out": 2.0, "req": [100, 200, 0]}
-    result = coord.efficiency(prices)
+    result = catalog.efficiency(prices)
     assert result["month_req_per_usd"] is None
 
     prices2 = {"in": 1.0, "out": 2.0, "req": [100, 200, None]}
-    result2 = coord.efficiency(prices2)
+    result2 = catalog.efficiency(prices2)
     assert result2["month_req_per_usd"] is None
 
 
@@ -251,7 +254,7 @@ def test_parse_reset_naive_datetime_converted_to_utc():
 
 def test_build_models_block_empty_live_ids():
     """[REQ-009] build_models_block([]) includes all known models from PRICING."""
-    result = coord.build_models_block([])
+    result = catalog.build_models_block([])
     assert result["model_count_live"] == 0
     # Should include all models from const.PRICING
     model_ids = {m["id"] for m in result["models"]}
@@ -266,7 +269,7 @@ def test_build_models_block_empty_live_ids():
 
 def test_build_models_block_live_ids_in_models():
     """[REQ-009] live_ids are marked with live=True, others live=False."""
-    result = coord.build_models_block(["grok-4.5", "gpt-5.6-luna"])
+    result = catalog.build_models_block(["grok-4.5", "gpt-5.6-luna"])
     grok_model = next((m for m in result["models"] if m["id"] == "grok-4.5"), None)
     assert grok_model is not None
     assert grok_model["live"] is True
@@ -278,7 +281,7 @@ def test_build_models_block_live_ids_in_models():
 
 def test_build_models_block_none_live_ids():
     """[REQ-009] build_models_block(None) treats all models as unknown."""
-    result = coord.build_models_block(None)
+    result = catalog.build_models_block(None)
     assert result["model_count_live"] == 0
     # All models should have live=None (unknown)
     for model in result["models"]:
@@ -289,7 +292,7 @@ def test_build_models_block_none_live_ids():
 
 def test_build_models_block_free_models_identified():
     """[REQ-009] Free models flagged correctly (ox-alpha-free)."""
-    result = coord.build_models_block(["ox-alpha-free"])
+    result = catalog.build_models_block(["ox-alpha-free"])
     free_models = result["free_models"]
     assert "ox-alpha-free" in free_models
     assert len(free_models) == 1  # only one free model in PRICING
@@ -298,7 +301,7 @@ def test_build_models_block_free_models_identified():
 def test_build_models_block_ranking_by_cost():
     """[REQ-009] build_models_block returns cheapest_model (paid, ranked by cost)."""
     # Keine Live-Daten (None) -> Ranking ueber alle PRICING-Modelle
-    result = coord.build_models_block(None)
+    result = catalog.build_models_block(None)
     # The function identifies cheapest_model (lowest cost among paid models)
     # and cheapest_overall (including free). Both should exist in PRICING.
     assert result["cheapest_model"] is not None  # At least one paid model exists
@@ -325,7 +328,7 @@ def test_build_models_block_dead_model_excluded_from_free_and_cheapest():
     Free-Modelle/Günstigstes (cheapest_overall) durften ihn daraufhin
     nicht mehr zeigen. Günstigstes (bezahlt) bleibt muse-spark.
     """
-    result = coord.build_models_block(["muse-spark-1.2-contributor"])
+    result = catalog.build_models_block(["muse-spark-1.2-contributor"])
     # Katalog-Listing behält den Altlast transparent (live: false)
     dead = next((m for m in result["models"] if m["id"] == "ox-alpha-free"), None)
     assert dead is not None
@@ -340,7 +343,7 @@ def test_build_models_block_dead_model_excluded_from_free_and_cheapest():
 
 def test_build_models_block_cheapest_model_paid():
     """[REQ-009] cheapest_model ignores free models, uses paid ranking."""
-    result = coord.build_models_block(["ox-alpha-free", "muse-spark-1.2-contributor"])
+    result = catalog.build_models_block(["ox-alpha-free", "muse-spark-1.2-contributor"])
     # ox-alpha-free is free, so cheapest_model should be muse-spark (cheapest paid)
     assert result["cheapest_model"] == "muse-spark-1.2-contributor"
     # cheapest_overall includes free, so ox-alpha-free should win (free=0.0)
@@ -349,13 +352,13 @@ def test_build_models_block_cheapest_model_paid():
 
 def test_build_models_block_cheapest_overall_free_model():
     """[REQ-009] cheapest_overall picks free model if available."""
-    result = coord.build_models_block(["ox-alpha-free"])
+    result = catalog.build_models_block(["ox-alpha-free"])
     assert result["cheapest_overall"] == "ox-alpha-free"
     # Fix 2026-09-05: nur ox-alpha-free ist live -> kein bezahltes Modell
     # live -> cheapest_model None (PRICING-Altlasten fuellen nichts mehr)
     assert result["cheapest_model"] is None
     # Sobald muse-spark ebenfalls live ist, ist es das guenstigste bezahlte
-    result2 = coord.build_models_block(["ox-alpha-free", "muse-spark-1.2-contributor"])
+    result2 = catalog.build_models_block(["ox-alpha-free", "muse-spark-1.2-contributor"])
     assert result2["cheapest_model"] == "muse-spark-1.2-contributor"
 
 
@@ -363,7 +366,7 @@ def test_build_models_block_cheapest_overall_no_pricing_data():
     """[REQ-009] models without pricing info excluded from ranking."""
     # All models in const.PRICING have pricing, so this is edge-case only
     # but the logic should handle unknown models gracefully
-    result = coord.build_models_block([])
+    result = catalog.build_models_block([])
     # All should have pricing_known=True from PRICING table
     for model in result["models"]:
         assert model["pricing_known"] is True
@@ -372,7 +375,7 @@ def test_build_models_block_cheapest_overall_no_pricing_data():
 def test_build_models_block_includes_timestamp():
     """[REQ-009] build_models_block includes models_updated_at timestamp."""
     before = datetime.now(timezone.utc)
-    result = coord.build_models_block([])
+    result = catalog.build_models_block([])
     after = datetime.now(timezone.utc)
 
     timestamp_str = result["models_updated_at"]
@@ -398,14 +401,13 @@ class _MockCoordinator:
         self._client = _MockClient(response)
         self.auto_usage = True
         self.usage_minutes = const.DEFAULT_USAGE_REFRESH_MINUTES
-        self.auto_models = False
-        self.models_minutes = const.DEFAULT_MODELS_REFRESH_MINUTES
         self.warn_percent = const.DEFAULT_WARN_PERCENT
         self._skip_reload = False
-        self.last_models_fetch = None
         self.last_usage_fetch = None
+        self.last_usage_attempt = None
+        self.last_usage_ok = None
+        self.last_usage_outcome = None
         self.data = None
-        self.is_catalog_owner = False
 
 
 class _MockClient:
@@ -509,6 +511,98 @@ def test_window_field_mapping_all_three_windows_distinct():
     assert ws["windows"]["5h"]["percent"] == 11.1
     assert ws["windows"]["week"]["percent"] == 22.2
     assert ws["windows"]["month"]["percent"] == 33.3
+
+
+def test_snapshot_has_no_models_keys():
+    """[PLAN2-M3] The workspace snapshot is usage-only (exact key set).
+
+    The catalog moved to the AccountCoordinator (2.0.0), so the workspace
+    snapshot must not carry ``models_block``/``last_models_fetch``/``auto_models``
+    anymore - a consumer looking for them would silently read ``None``.
+    """
+    c = _MockCoordinator(_api_ok_response())
+    c.__class__ = type("GoGaugeCoordinator", (_MockCoordinator, coord.GoGaugeCoordinator), {})
+    c._async_update_data = coord.GoGaugeCoordinator._async_update_data.__get__(c)
+
+    result = asyncio.run(c._async_update_data())
+
+    assert set(result) == {
+        "fetched_at",
+        "last_usage_fetch",
+        "last_usage_ok",
+        "last_usage_attempt",
+        "last_usage_outcome",
+        "auto_usage",
+        "usage_refresh_minutes",
+        "workspaces",
+    }
+    # Evidence bookkeeping: a successful cycle refreshes ok + outcome.
+    assert result["last_usage_outcome"] == "ok"
+    assert result["last_usage_ok"] is not None
+    assert result["last_usage_attempt"] is not None
+
+
+def test_outcome_neutral_when_every_workspace_has_no_subscription():
+    """[PLAN2-M3] no_subscription is an ANSWER -> outcome "neutral", not "fail"."""
+    c = _MockCoordinator({"usage": {}, "status": "no_subscription"})
+    c.__class__ = type("GoGaugeCoordinator", (_MockCoordinator, coord.GoGaugeCoordinator), {})
+    c._async_update_data = coord.GoGaugeCoordinator._async_update_data.__get__(c)
+
+    result = asyncio.run(c._async_update_data())
+
+    assert result["last_usage_outcome"] == "neutral"
+    assert result["last_usage_ok"] is None
+
+
+def test_outcome_fail_on_transport_error():
+    """[PLAN2-M3] A transport error is a real failure; attempt is still set."""
+
+    class _BoomClient:
+        async def fetch_usage(self, token: str) -> dict:
+            raise RuntimeError("timeout")
+
+    c = _MockCoordinator({})
+    c._client = _BoomClient()
+    c.__class__ = type("GoGaugeCoordinator", (_MockCoordinator, coord.GoGaugeCoordinator), {})
+    c._async_update_data = coord.GoGaugeCoordinator._async_update_data.__get__(c)
+
+    result = asyncio.run(c._async_update_data())
+
+    assert result["last_usage_outcome"] == "fail"
+    assert result["last_usage_attempt"] is not None
+
+
+def test_attempt_updated_even_without_a_due_fetch():
+    """[PLAN2-M3] ``last_usage_attempt`` is written on EVERY run.
+
+    With auto-update off and a recent fetch nothing is due - the evidence
+    timestamp must still advance (the reachability matrix needs it), while the
+    outcome stays untouched (a publish-only run must not invent a failure).
+    """
+    now = datetime.now(timezone.utc)
+    c = _MockCoordinator({})
+    c.auto_usage = False
+    c.last_usage_fetch = now
+    c.__class__ = type("GoGaugeCoordinator", (_MockCoordinator, coord.GoGaugeCoordinator), {})
+    c._async_update_data = coord.GoGaugeCoordinator._async_update_data.__get__(c)
+
+    result = asyncio.run(c._async_update_data())
+
+    assert result["last_usage_outcome"] is None
+    assert result["last_usage_attempt"] is not None
+    assert result["last_usage_fetch"] == now.isoformat()
+
+
+def _api_ok_response() -> dict:
+    """Minimal successful usage response (one workspace, all windows)."""
+    return {
+        "usage": {
+            "rolling": {"percent": 10.0, "status": "ok", "resetsAt": "2026-09-05T00:00:00Z"},
+            "weekly": {"percent": 20.0, "status": "ok", "resetsAt": "2026-09-08T00:00:00Z"},
+            "monthly": {"percent": 30.0, "status": "ok", "resetsAt": "2026-10-04T00:00:00Z"},
+        },
+        "status": "ok",
+    }
 
 
 if __name__ == "__main__":

@@ -1,16 +1,19 @@
 """Go Gauge HA - sensor platform (direct API data).
 
-Modell-Katalog = EIN Sensor ("Go Gauge Models") mit dem kompletten Katalog
-als JSON-Attribute -> dynamisch, neue Modelle erscheinen automatisch ohne
-neue Entitäten. Zusätzlich: Live-Anzahl, Günstigstes, Free-Modelle als
-kompakte Lese-Sensoren.
+Two kinds of entries, two kinds of sensors (2.0.0, plan §2.9):
+
+* workspace entry -> the per-window usage sensors + the per-workspace API status
+  sensor, all reading the workspace ``GoGaugeCoordinator``;
+* account entry -> the four catalog sensors (ModelCatalogSensor with the whole
+  catalog as JSON attributes, LiveModelsCount, CheapestModel, FreeModels),
+  reading the workspace-independent ``AccountCoordinator``.
 """
 from __future__ import annotations
 
 import json
 import logging
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -21,9 +24,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .account_logic import canonical_unique_id
 from .const import (
     DOMAIN,
+    ENTRY_KIND_ACCOUNT,
     WINDOW_LABELS,
+    conf_entry_kind,
 )
 from .coordinator import (
     GoGaugeCoordinator,
@@ -35,6 +41,9 @@ from .coordinator import (
 )
 from .entity import GoGaugeAccountEntityBase, GoGaugeEntityBase
 
+if TYPE_CHECKING:  # no runtime import: sensors must stay loadable on their own
+    from .account import AccountCoordinator
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -43,12 +52,23 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Create entities (fixed set - model list lives in ONE sensor's attributes).
+    """Create the sensors of THIS entry kind (plan §2.9/§3.3 step 3e).
 
-    Katalog-Entities (Modelle, Live-Count, Guenstigstes, Free) nur von der
-    ersten Instanz ('_catalog_owner') - weitere Workspace-Instanzen erzeugen
-    KEINE Duplikate. Workspace-Sensoren kommen von jeder Instanz.
+    Account entries create exactly the four catalog sensors with their canonical
+    ``account_<kind>`` unique_ids, so the adoption forward re-binds the existing
+    registry entries instead of creating a second generation. Workspace entries
+    create the usage sensors and never a catalog sensor (no owner mechanism).
     """
+    if conf_entry_kind(entry.data) == ENTRY_KIND_ACCOUNT:
+        account_coordinator: AccountCoordinator = hass.data[DOMAIN][entry.entry_id]
+        async_add_entities([
+            ModelCatalogSensor(account_coordinator, entry),
+            LiveModelsCountSensor(account_coordinator, entry),
+            CheapestModelSensor(account_coordinator, entry),
+            FreeModelsSensor(account_coordinator, entry),
+        ])
+        return
+
     coordinator: GoGaugeCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[SensorEntity] = []
 
@@ -73,13 +93,6 @@ async def async_setup_entry(
         # API-Status je Workspace (neu 2026-09-25): benennt die URSACHE
         # statt nur ja/nein - der Abo-Binary-Sensor allein war mehrdeutig.
         entities.append(ApiStatusSensor(coordinator, entry, key=key))
-
-    if getattr(coordinator, "is_catalog_owner", True):
-        # Modell-Katalog: EIN Sensor mit JSON-Attributen (dynamisch)
-        entities.append(ModelCatalogSensor(coordinator, entry))
-        entities.append(LiveModelsCountSensor(coordinator, entry))
-        entities.append(CheapestModelSensor(coordinator, entry))
-        entities.append(FreeModelsSensor(coordinator, entry))
 
     async_add_entities(entities)
 
@@ -324,15 +337,20 @@ class ModelCatalogSensor(GoGaugeAccountEntityBase, SensorEntity):
     als JSON-String (`catalog`) plus Aufbereitungen (live/free/cheapest...).
     Neue Modelle erscheinen hier automatisch beim naechsten Modell-Refresh -
     ganz ohne neue Entitaeten.
+
+    Reads the ``AccountCoordinator``: ``models_block`` is the last successful
+    catalog fetch (``None`` until the first one), and the account settings are
+    surfaced as attributes (plan §2.9/§6.5) so a dashboard can show "auto
+    refresh off" without opening the device page.
     """
 
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:format-list-bulleted"
     _attr_translation_key = "model_catalog"
 
-    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
+    def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_model_catalog"
+        self._attr_unique_id = canonical_unique_id("model_catalog")
         # Cache fuer extra_state_attributes, invalidiert ueber
         # "models_updated_at" (aendert sich nur bei echtem Modell-Refresh,
         # nicht bei jedem Coordinator-Poll) - vermeidet dict-Copy +
@@ -342,19 +360,24 @@ class ModelCatalogSensor(GoGaugeAccountEntityBase, SensorEntity):
 
     @property
     def native_value(self) -> int | None:
-        block = self.coordinator.data.get("models_block") or {}
+        block = self.coordinator.models_block or {}
         models = block.get("models") or []
         return len(models) if models else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        block_raw = self.coordinator.data.get("models_block") or {}
-        cache_key = block_raw.get("models_updated_at")
-        if (
-            cache_key is not None
-            and cache_key == self._attrs_cache_key
-            and self._attrs_cache is not None
-        ):
+        block_raw = self.coordinator.models_block or {}
+        # Cache key = catalog revision + the live account settings: a switch or
+        # interval change must show up immediately (they are part of the
+        # attributes below), not only on the next catalog fetch.
+        cache_key = (
+            block_raw.get("models_updated_at"),
+            self.coordinator.auto_fetch,
+            self.coordinator.fetch_interval_minutes,
+            self.coordinator.base_interval_minutes,
+            self.coordinator.last_models_outcome,
+        )
+        if cache_key == self._attrs_cache_key and self._attrs_cache is not None:
             return self._attrs_cache
 
         block = dict(block_raw)
@@ -382,6 +405,12 @@ class ModelCatalogSensor(GoGaugeAccountEntityBase, SensorEntity):
                      and m.get("live") is not False],
                     key=lambda m: m["usd_per_1m_mixed"])
             ],
+            # Account settings (plan §6.5): base interval vs. effective
+            # interval (incl. backoff) and the last catalog outcome.
+            "account_auto_update_models": self.coordinator.auto_fetch,
+            "account_fetch_interval_minutes": self.coordinator.fetch_interval_minutes,
+            "account_models_refresh_minutes": self.coordinator.base_interval_minutes,
+            "account_last_models_outcome": self.coordinator.last_models_outcome,
         }
         # Kompletter Katalog als JSON-String (Templates/LoV-freundlich)
         attrs["catalog_json"] = json.dumps(models, ensure_ascii=False)
@@ -398,13 +427,13 @@ class LiveModelsCountSensor(GoGaugeAccountEntityBase, SensorEntity):
     _attr_icon = "mdi:check-network-outline"
     _attr_translation_key = "live_models_count"
 
-    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
+    def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_models_live_count"
+        self._attr_unique_id = canonical_unique_id("models_live_count")
 
     @property
     def native_value(self) -> int | None:
-        block = self.coordinator.data.get("models_block") or {}
+        block = self.coordinator.models_block or {}
         return block.get("model_count_live")
 
 
@@ -414,17 +443,17 @@ class CheapestModelSensor(GoGaugeAccountEntityBase, SensorEntity):
     _attr_icon = "mdi:crown-outline"
     _attr_translation_key = "cheapest_model"
 
-    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
+    def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_cheapest_model"
+        self._attr_unique_id = canonical_unique_id("cheapest_model")
 
     @property
     def native_value(self) -> str | None:
-        return (self.coordinator.data.get("models_block") or {}).get("cheapest_model")
+        return (self.coordinator.models_block or {}).get("cheapest_model")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        block = self.coordinator.data.get("models_block") or {}
+        block = self.coordinator.models_block or {}
         return {
             "cheapest_overall": block.get("cheapest_overall"),
             "ratio_usd_per_1m": block.get("cheapest_ratio"),
@@ -435,14 +464,15 @@ class FreeModelsSensor(GoGaugeAccountEntityBase, SensorEntity):
     _attr_icon = "mdi:gift-outline"
     _attr_translation_key = "free_models"
 
-    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
+    def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_free_models"
+        self._attr_unique_id = canonical_unique_id("free_models")
 
     @property
     def native_value(self) -> str | None:
-        free = (self.coordinator.data.get("models_block") or {}).get("free_models") or []
+        free = (self.coordinator.models_block or {}).get("free_models") or []
         return ", ".join(free) if free else None
+
 
 
 class ApiStatusSensor(GoGaugeEntityBase, SensorEntity):

@@ -23,10 +23,10 @@ ist als Konto-Panel vorhanden):
 - pro Fenster (5h rolling / Weekly / Monthly) Nutzung, Pace, Prognose,
   Restbudget, Restzeit, Burn-Rate und Reset bzw. Rate-Limit,
 - einen Nutzungsverlauf,
-- eine Steuerungs-Sektion (Warnschwelle, Ampel Rot-Grenze, Refresh-Intervalle,
-  Auto-Update-Schalter, manueller Refresh),
+- eine Steuerungs-Sektion (Warnschwelle, Ampel Rot-Grenze,
+  Usage-Refresh-Intervall, Auto-Update Usage, Refresh (Usage)),
 - eine Katalog-/Konto-Sektion (Models, Live Models, Cheapest Model,
-  Free Models, API Reachable).
+  Free Models, API Reachable, globale Konto-Settings, Katalog-Refresh).
 
 Screenshots:
 
@@ -41,7 +41,8 @@ Mushroom-Dashboard — Screenshot folgt (Platzhalter).
 ### Standard (`workspace-standard.yaml`)
 
 - Keine zusätzliche Integration und keine Custom-Ressourcen nötig.
-- Home Assistant **>= 2024.6.0** (Mindestversion aus [`hacs.json`](../../hacs.json)).
+- Home Assistant **>= 2026.8.0** (Mindestversion der Integration ab v2.0.0:
+  Konto-Entry-Architektur, `unique_id`-Normalisierung `account_*`).
 - Die verwendeten Karten `grid`, `gauge`, `entities`, `markdown` und
   `history-graph` sind Bordmittel und in dieser Version verfügbar.
 
@@ -65,7 +66,7 @@ Mushroom-Dashboard — Screenshot folgt (Platzhalter).
   - **layout-card** (`custom:layout-card`) — responsives Grid-Layout,
   - **Mushroom** (`custom:mushroom-*`) — Karten der Kachel,
   - **vertical-stack-in-card** (`custom:vertical-stack-in-card`) — Kachel-Container.
-- Home Assistant **>= 2024.7** (Badges ab 2024.8). Die Karte registriert optional
+- Home Assistant **>= 2026.8.0** (Badges ab 2024.8). Die Karte registriert optional
   auch den Alt-Typ `custom:decluttering-card`; die Vorlage nutzt ausschließlich
   `custom:decluttering-card-plus`.
 - `card-mod` ist ausdrücklich **nicht** erforderlich.
@@ -102,7 +103,10 @@ verlassen.
 **Stabil ist der `unique_id`-Suffix.** Jede Entity trägt eine `unique_id`
 nach dem Muster `{entry_id}_{workspace_key}_{window}{suffix}` (fensterspezifisch)
 bzw. `{entry_id}_{workspace_key}{suffix}` / `{entry_id}{suffix}`
-(Workspace-/Konto-Ebene). Diese Suffixe sind die Wahrheit; siehe
+(Workspace-Ebene). Konto-Entities tragen dagegen die kanonische Form
+`account_<kind>` (z. B. `account_model_catalog`, `account_api_reachable`); die
+Konto-Settings heißen `account_auto_update_models`, `account_models_refresh_minutes`
+und `account_refresh`. Diese Suffixe sind die Wahrheit; siehe
 [`entity-map.yaml`](entity-map.yaml).
 
 **Die `WS`-Konvention:** In den Dashboard-Vorlagen steht `WS` als Platzhalter
@@ -127,20 +131,23 @@ an eine reale Go-Gauge-Instanz bindet:
 **a) Wahrheitsquelle im Repo lesen.** Welche Entity welchen `unique_id`-Suffix,
 Namen und welche Attribute hat, steht im Integrationscode:
 
-- `custom_components/go_gauge/sensor.py:108-109` (`usage_percent`)
-- `custom_components/go_gauge/sensor.py:160-161` (`reset`)
-- `custom_components/go_gauge/sensor.py:193-194` (`forecast`)
-- `custom_components/go_gauge/sensor.py:215-216` (`pace`)
-- `custom_components/go_gauge/sensor.py:255-256` (`remaining`)
-- `custom_components/go_gauge/sensor.py:275-276` (`time_to_reset`)
-- `custom_components/go_gauge/sensor.py:296-297` (`burn_rate`)
-- `custom_components/go_gauge/binary_sensor.py:53-55` (`limited`)
-- `custom_components/go_gauge/binary_sensor.py:90-91` (`subscription_active`)
-- `custom_components/go_gauge/number.py:24-26,66-69` (`warn_percent`)
-- `custom_components/go_gauge/switch.py:38-40,66-68`
-  (`auto_update_usage`, `auto_update_models`)
-- `custom_components/go_gauge/button.py:32,36` (`refresh`)
-- `custom_components/go_gauge/entity.py:24-29` (Device-Info: Workspace-Gerät)
+- `custom_components/go_gauge/sensor.py:105-165` (`usage_percent`)
+- `custom_components/go_gauge/sensor.py:168-190` (`reset`)
+- `custom_components/go_gauge/sensor.py:193-219` (`forecast`)
+- `custom_components/go_gauge/sensor.py:222-259` (`pace`)
+- `custom_components/go_gauge/sensor.py:262-284` (`remaining`)
+- `custom_components/go_gauge/sensor.py:287-306` (`time_to_reset`)
+- `custom_components/go_gauge/sensor.py:309-330` (`burn_rate`)
+- `custom_components/go_gauge/binary_sensor.py:63-96` (`limited`)
+- `custom_components/go_gauge/binary_sensor.py:99-136` (`subscription_active`)
+- `custom_components/go_gauge/number.py:102-169`
+  (`warn_percent`, `pace_red_percent`, `usage_refresh_minutes`)
+- `custom_components/go_gauge/switch.py:56-83` (`auto_update_usage`);
+  Konto: `switch.py:85-116` (`auto_update_models`)
+- `custom_components/go_gauge/button.py:45-64` (`refresh`, nur Usage);
+  Konto: `button.py:67-79` (`refresh_account`, Katalog)
+- `custom_components/go_gauge/entity.py` (Device-Info: Workspace- und
+  Konto-Gerät), `account.py` (Konto-Entry, Reachability, Settings)
 
 Die vollständige Liste samt Konto-Entities steht in
 [`entity-map.yaml`](entity-map.yaml).
@@ -153,9 +160,13 @@ raten.
 
 **c) Workspace und Konto bestimmen.** Ein Workspace gehört zum Gerät
 `Go Gauge {ws_name}` mit Identifier `go_gauge`/`<entry_id>`. Das Konto-Gerät
-hat den Identifier `go_gauge`/`account` und existiert genau einmal
-(Catalog Owner); seine Entities (Models, Live Models, Cheapest Model,
-Free Models, API Reachable) existieren entsprechend genau einmal.
+hat den Identifier `go_gauge`/`account` und existiert genau einmal: Es gehört der
+automatisch angelegten **Konto-Entry** (`unique_id` = `go_gauge_account`, Titel
+`Go Gauge Konto`), nicht einem Workspace. Seine Entities (Models, Live Models,
+Cheapest Model, Free Models, API Reachable) sowie der Katalog-Refresh-Button und
+die globalen Konto-Settings existieren entsprechend genau einmal. Die Konto-Entry
+nie manuell anlegen — sie entsteht beim ersten Workspace-Setup bzw. HA-Start und
+wird nach dem Löschen auf dieselbe Weise neu erzeugt.
 
 **d) Substitution.** `WS` durch den realen Workspace-Slug ersetzen. Alternativ
 in Jinja-Templates dynamisch auflösen, indem über die Attribute
@@ -164,9 +175,15 @@ gesucht wird (z. B. per `states.sensor`-Schleife) — das ist robuster gegen
 umbenannte Workspaces.
 
 **e) Katalog lesen.** Modell-Informationen gibt es **nur** über die Attribute
-des `_model_catalog`-Sensors (`catalog_json`, `ranking_by_cost`,
-`free_models`, `cheapest_model`, `cheapest_overall`, `count`, `live_count`,
-`models_updated_at`). Es existieren **keine** Einzel-Entities pro Modell.
+des Katalog-Sensors (unique_id `account_model_catalog`; `catalog_json`,
+`ranking_by_cost`, `free_models`, `cheapest_model`, `cheapest_overall`, `count`,
+`live_count`, `models_updated_at`) plus die globalen Konto-Settings
+(`account_auto_update_models`, `account_fetch_interval_minutes`,
+`account_models_refresh_minutes`, `account_last_models_outcome`). Es existieren
+**keine** Einzel-Entities pro Modell. Die Erreichbarkeit
+(unique_id `account_api_reachable`) liefert `reachability_reason`, `evidence`,
+`models_ttl_s`, `usage_ttl_s` und `checked_at` als Attribute; ihr Zustand ist
+dreiwertig (ON / OFF / unknown).
 
 ## 6. `workspace-matrix.yaml` — Variablen & Bindung
 
@@ -195,12 +212,12 @@ Die Kachel ist über sieben Variablen parametrisiert. Sie werden pro
 | Variable | Bedeutung | Beispiel |
 |---|---|---|
 | `[[ws_name]]` | Anzeigename der Kachel (frei wählbar) | `"App"` |
-| `[[slug_a]]` | `entity_id`-Präfix für Entities mit **trailing** Fragment: `usage`, `reset`, `rate_limited`, `subscription_active`, `auto_update_usage`, `auto_update_models` | `"go_gauge_ha_go_gauge_app"` |
+| `[[slug_a]]` | `entity_id`-Präfix für Entities mit **trailing** Fragment: `usage`, `reset`, `rate_limited`, `subscription_active`, `auto_update_usage` | `"go_gauge_ha_go_gauge_app"` |
 | `[[slug_b]]` | `entity_id`-Präfix für Entities mit **trailing** Fragment: `forecast`, `pace`, `remaining`, `time_to_reset`, `burn_rate` | `"software_go_gauge_app"` |
 | `[[num_slug]]` | `entity_id`-Präfix für `number`-Entities mit **leading** Fragment: `<device>_go_gauge` | `"go_gauge_ha_go_gauge"` |
 | `[[num_suffix]]` | Workspace-Suffix der `number`-Entities | `"_app"` |
 | `[[ampel_id]]` | **volle** `entity_id` der Pace-Red-Limit-Number: `number.<device>_go_gauge_pace_red_limit_<workspace>` | `"number.software_go_gauge_app_go_gauge_pace_red_limit_app"` |
-| `[[refresh_btn]]` | **volle** `entity_id` des Refresh-Buttons: `button.<...>_refresh` | `"button.go_gauge_ha_go_gauge_refresh_3"` |
+| `[[refresh_btn]]` | **volle** `entity_id` des **Workspace**-Refresh-Buttons (lädt nur Usage): `button.<...>_refresh`. Der Konto-Refresh ist ein separater, device-präfixierter Button (siehe unten). | `"button.go_gauge_ha_go_gauge_refresh_3"` |
 
 In der Kachel ergibt sich damit z. B. `sensor.[[slug_a]]_5h_rolling_usage`,
 `sensor.[[slug_b]]_weekly_forecast` oder
@@ -216,22 +233,27 @@ sondern über Icon (Warn-Icon), rote `icon_color` und den Hinweis
 bleibt `more-info`.
 
 Der Abo-/API-Status ist aufgeteilt: Der Abo-Status (`subscription_active`)
-bleibt icon-only im Kachel-Header, die **API-Reachability**
-(`binary_sensor.go_gauge_api_reachable`) liegt als konto-weite Kopfzeile
-**über** dem Grid (siehe unten). Unterhalb des Grids steht das Konto-Panel
-„Modell-Katalog / Konto" mit `sensor.go_gauge_models`,
-`sensor.go_gauge_live_models`, `sensor.go_gauge_cheapest_model` und
-`sensor.go_gauge_free_models` — diese Entities existieren nur einmal
-(Catalog Owner).
+bleibt icon-only im Kachel-Header, die **API-Reachability** (unique_id
+`account_api_reachable`) liegt als konto-weite Kopfzeile **über** dem Grid
+(siehe unten). Unterhalb des Grids steht das Konto-Panel
+„Modell-Katalog / Konto" mit den Katalog-Sensoren (`account_model_catalog`,
+`account_models_live_count`, `account_cheapest_model`, `account_free_models`)
+sowie den globalen Konto-Settings (`account_auto_update_models` Switch,
+`account_models_refresh_minutes` Number) und dem Konto-Refresh-Button
+(`account_refresh`, lädt **nur den Katalog**). Diese Entities existieren nur
+einmal, weil sie der Konto-Entry gehören.
 
 > **Hinweis — Account-`entity_id`s illustrativ:** Die hier und in der globalen
 > Kopfzeile genannten Account-`entity_id`s (`sensor.go_gauge_models`,
 > `sensor.go_gauge_live_models`, `sensor.go_gauge_cheapest_model`,
-> `sensor.go_gauge_free_models`, `binary_sensor.go_gauge_api_reachable`) sind
-> **illustrativ** und können je nach Device-Prefix/Systemsprache abweichen.
-> Verbindlich ist der `unique_id`-Suffix-Match aus der Entity-Registry:
-> `_model_catalog`, `_models_live_count`, `_cheapest_model`, `_free_models`,
-> `_api_reachable` (siehe [`entity-map.yaml`](entity-map.yaml)).
+> `sensor.go_gauge_free_models`, `binary_sensor.go_gauge_api_reachable`,
+> `button.go_gauge_konto_refresh`) sind **illustrativ** und können je nach
+> Device-Prefix/Systemsprache abweichen; bestehende Installationen behalten ihre
+> `entity_id`. Verbindlich ist der `unique_id`-Match aus der Entity-Registry:
+> `account_model_catalog`, `account_models_live_count`, `account_cheapest_model`,
+> `account_free_models`, `account_api_reachable`, `account_refresh`,
+> `account_auto_update_models`, `account_models_refresh_minutes`
+> (siehe [`entity-map.yaml`](entity-map.yaml)).
 
 ### Bindungs-Caveat
 
@@ -241,10 +263,12 @@ bereits registrierte Entities ein anderes Device-Präfix als neu registrierte
 Befund ND-1). Die Slugs deshalb **nie aus dem Friendly Name raten**, sondern
 die reale `entity_id` über den `unique_id`-Suffix aus der Entity-Registry
 auflösen ([`entity-map.yaml`](entity-map.yaml), Abschnitt 5 b). Der
-Refresh-Button `button.<...>_refresh` ist workspace-unabhängig benannt und
-kollidiert bei mehreren Workspaces (`..._2`, `..._3`, …) — seine reale
-`entity_id` daher ebenfalls aus der Registry holen (unique_id-Suffix
-`_refresh`).
+**Workspace**-Refresh-Button `button.<...>_refresh` ist workspace-unabhängig
+benannt und kollidiert bei mehreren Workspaces (`..._2`, `..._3`, …) — seine
+reale `entity_id` daher ebenfalls aus der Registry holen (unique_id-Suffix
+`_refresh`). Der **Konto**-Refresh-Button ist dagegen device-präfixiert
+(`button.go_gauge_konto_refresh`, unique_id `account_refresh`) und damit von
+der Workspace-Kollision nicht betroffen.
 
 > **Slug-Sprache:** Seit v1.5.0 sind die `entity_id`-Slugs englisch
 > (`*_usage`, `*_forecast`, `*_remaining`, `*_time_to_reset`, …;
@@ -254,11 +278,17 @@ kollidiert bei mehreren Workspaces (`..._2`, `..._3`, …) — seine reale
 
 ## 7. FAQ / Known Gotchas
 
-- **Button-Name kollidiert bei mehreren Workspaces.** Der Refresh-Button heißt
-  ohne Workspace-Namen `Go Gauge Refresh`; bei mehreren Workspaces wird
-  seine `entity_id` von Home Assistant zu `..._2` (und so weiter) abgeändert.
-  Die reale `entity_id` deshalb immer über den `unique_id`-Suffix `_refresh`
-  aus der Registry holen.
+- **Workspace-Button-Name kollidiert bei mehreren Workspaces.** Der
+  Workspace-Refresh-Button heißt ohne Workspace-Namen `Go Gauge Refresh` und
+  lädt **nur Usage**; bei mehreren Workspaces wird seine `entity_id` von Home
+  Assistant zu `..._2` (und so weiter) abgeändert. Die reale `entity_id` deshalb
+  immer über den `unique_id`-Suffix `<entry_id>_refresh` aus der Registry holen.
+  Der Konto-Refresh (`button.go_gauge_konto_refresh`, unique_id `account_refresh`,
+  Katalog) ist davon **nicht** betroffen, weil er am Konto-Gerät hängt.
+- **Konto-Settings sind global.** `account_auto_update_models` (Default ON) und
+  `account_models_refresh_minutes` (1–1440 min, Default 60) liegen am
+  Konto-Gerät und gelten für alle Workspaces. Die früheren Workspace-Regler
+  `auto_update_models` / `models_refresh_minutes` existieren ab 2.0.0 nicht mehr.
 - **`_pace`-State ist ein englischer String.** Mögliche Werte: `green`,
   `yellow`, `red` (nicht übersetzt). Die Schwellen kommen aus den
   Number-Entities Warning Threshold und Pace Red Limit.

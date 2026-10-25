@@ -9,7 +9,7 @@ Covers the interface contract:
   closure with defensive collision handling)
 - ``__init__._async_migrate_entity_ids`` (awaits
   ``homeassistant.helpers.entity_registry.async_migrate_entries`` defensively)
-- ``async_migrate_entry`` targeting ConfigEntry version 7
+- ``async_migrate_entry`` targeting ConfigEntry version 8
 - translation-key wiring: every ``_attr_translation_key`` used by a platform
   class has a matching ``entity.<platform>.<key>.name`` entry in
   strings.json / translations/en.json / translations/de.json, and no platform
@@ -70,7 +70,17 @@ def _load(name: str, path: str):
 
 # Load real modules in dependency order (const, coordinator, __init__).
 const = _load("go_gauge.const", str(BASE / "const.py"))
+_load("go_gauge.api", str(BASE / "api.py"))
+_load("go_gauge.catalog", str(BASE / "catalog.py"))
 _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
+# Load account.py before __init__: __init__ imports it relatively and the
+# offline `_load` loader only resolves sibling modules already present in
+# sys.modules under their dotted "go_gauge.*" name.
+# account.py binds ConfigEntryState at import time; a later-collected
+# module may have swapped the fake module object, so re-install the stable
+# double right before the import.
+conftest.install_config_entry_state_stub()
+_load("go_gauge.account", str(BASE / "account.py"))
 init_module = _load("go_gauge.__init__", str(BASE / "__init__.py"))
 
 
@@ -598,7 +608,7 @@ class TestAsyncMigrateEntityIds:
 
     @pytest.mark.asyncio
     async def test_v7_entry_is_idempotent(self):
-        """[REQ-MIG7] An entry already at v7 returns True without re-migrating."""
+        """[REQ-MIG7] An entry already at v7 skips v7 and reaches v8 (no re-migrating)."""
         entry = MagicMock()
         entry.version = 7
         entry.unique_id = "go_gauge_deadbeefdeadbeef"
@@ -616,7 +626,9 @@ class TestAsyncMigrateEntityIds:
             result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        assert entry.version == 7
+        # v7 body skipped (already v7); the v8 entry_kind step still applies.
+        assert entry.version == 8
+        assert entry.data["entry_kind"] == "workspace"
         migrate_names.assert_not_awaited()
         migrate_ids.assert_not_awaited()
 
@@ -640,14 +652,16 @@ class TestAsyncMigrateEntityIds:
             result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        assert entry.version == 7
+        assert entry.version == 8
         # Only the v7 step runs for an entry already at v6.
         migrate_names.assert_not_awaited()
         migrate_ids.assert_awaited_once_with(hass, entry)
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
         assert call_args[1]["unique_id"] == "go_gauge_deadbeefdeadbeef"
-        assert call_args[1]["data"] == {"token": "tok-123", "workspace_name": "WS"}
+        assert call_args[1]["data"] == {
+            "token": "tok-123", "workspace_name": "WS", "entry_kind": "workspace",
+        }
         assert call_args[1]["options"] == {"warn_percent": 80}
 
     @pytest.mark.asyncio
@@ -655,7 +669,8 @@ class TestAsyncMigrateEntityIds:
         """[REQ-MIG7] A failed id pass leaves the entry at v6 so HA retries.
 
         m2: the v7 step must not silently advance when the helper failed - only
-        a successful pass may set ``entry.version = 7``.
+        a successful pass may set ``entry.version = 7``. The v8 entry_kind step
+        must therefore be skipped too (``new_version`` stays 6).
         """
         entry = MagicMock()
         entry.version = 6
@@ -674,13 +689,14 @@ class TestAsyncMigrateEntityIds:
 
         assert result is True
         assert entry.version == 6
+        assert "entry_kind" not in hass.config_entries.async_update_entry.call_args[1]["data"]
         migrate_ids.assert_awaited_once_with(hass, entry)
 
     @pytest.mark.asyncio
-    async def test_future_version_above_seven_is_rejected(self):
-        """[REQ-MIG7] A version > 7 returns False without touching the entry."""
+    async def test_future_version_above_eight_is_rejected(self):
+        """[REQ-MIG7] A version > 8 returns False without touching the entry."""
         entry = MagicMock()
-        entry.version = 8
+        entry.version = 9
         entry.data = {}
         entry.options = {}
 
@@ -965,7 +981,7 @@ class TestStrictConfigEntryMigration:
 
     @pytest.mark.asyncio
     async def test_v5_entry_migrates_on_strict_entry(self):
-        """[REQ-MIG7] v5 -> v7 runs on a strict entry and sets version via update."""
+        """[REQ-MIG7] v5 -> v8 runs on a strict entry and sets version via update."""
         entry = conftest.StrictConfigEntry(
             version=5,
             unique_id="go_gauge_deadbeefdeadbeef",
@@ -984,21 +1000,23 @@ class TestStrictConfigEntryMigration:
             result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        assert entry.version == 7
+        assert entry.version == 8
         migrate_names.assert_awaited_once_with(hass, entry)
         migrate_ids.assert_awaited_once_with(hass, entry)
 
         update = hass.config_entries.async_update_entry
         update.assert_called_once()
         kwargs = update.call_args.kwargs
-        assert kwargs["version"] == 7
+        assert kwargs["version"] == 8
         assert kwargs["unique_id"] == "go_gauge_deadbeefdeadbeef"
-        assert kwargs["data"] == {"token": "tok-123", "workspace_name": "WS"}
+        assert kwargs["data"] == {
+            "token": "tok-123", "workspace_name": "WS", "entry_kind": "workspace",
+        }
         assert kwargs["options"] == {"warn_percent": 80}
 
     @pytest.mark.asyncio
     async def test_v1_entry_migrates_on_strict_entry(self):
-        """[REQ-MIG7] v1 -> v7 with all data steps on a strict entry."""
+        """[REQ-MIG7] v1 -> v8 with all data steps on a strict entry."""
         entry = conftest.StrictConfigEntry(
             version=1,
             data={"tokens": ["token-1", "token-2"], "host": "192.168.1.1"},
@@ -1016,10 +1034,12 @@ class TestStrictConfigEntryMigration:
             result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        assert entry.version == 7
+        assert entry.version == 8
         kwargs = hass.config_entries.async_update_entry.call_args.kwargs
-        assert kwargs["version"] == 7
-        assert kwargs["data"] == {"token": "token-1", "workspace_name": ""}
+        assert kwargs["version"] == 8
+        assert kwargs["data"] == {
+            "token": "token-1", "workspace_name": "", "entry_kind": "workspace",
+        }
         assert kwargs["options"]["usage_refresh_minutes"] == 5
 
     @pytest.mark.asyncio

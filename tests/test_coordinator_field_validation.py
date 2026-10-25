@@ -67,6 +67,8 @@ def _load(name, path):
 
 
 const = _load("go_gauge.const", str(BASE / "const.py"))
+_load("go_gauge.api", str(BASE / "api.py"))
+_load("go_gauge.catalog", str(BASE / "catalog.py"))
 coord = _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 
 
@@ -90,14 +92,13 @@ def _make_coordinator(response: dict) -> "coord.GoGaugeCoordinator":
     c._client = _FakeClient(response)
     c.auto_usage = True
     c.usage_minutes = const.DEFAULT_USAGE_REFRESH_MINUTES
-    c.auto_models = False
-    c.models_minutes = const.DEFAULT_MODELS_REFRESH_MINUTES
     c.warn_percent = const.DEFAULT_WARN_PERCENT
     c._skip_reload = False
-    c.last_models_fetch = None
     c.last_usage_fetch = None
+    c.last_usage_attempt = None
+    c.last_usage_ok = None
+    c.last_usage_outcome = None
     c.data = None
-    c.is_catalog_owner = False
     return c
 
 

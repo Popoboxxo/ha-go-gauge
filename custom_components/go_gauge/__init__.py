@@ -1,9 +1,14 @@
 """Go Gauge HA - integration setup (direct opencode.ai access).
 
-Multi-Workspace-Design (Daniel v0.5): EINE Instanz pro Workspace
-(sprechender Name + ein Token). Der Modell-Katalog ist workspace-
-unabhaengig und wird NUR von der ersten Instanz als Entities angelegt;
-weitere Instanzen teilen ihn (hass.data[DOMAIN]['_catalog_owner']).
+Multi-Workspace-Design (Daniel v0.5): EINE Workspace-Instanz pro Token
+(sprechender Name + ein Token). Workspace-Instanzen besitzen ausschliesslich
+die Nutzungs-Entities.
+
+Seit 2.0.0 gibt es zusaetzlich genau EINE workspace-unabhaengige Konto-Entry
+(Domain ``go_gauge``, ``entry_kind == "account"``): sie besitzt den
+Modell-Katalog, die API-Reachability und die globalen Modell-Settings. Der
+frueherere "erste Instanz ist Catalog-Owner"-Mechanismus ist ersatzlos
+entfallen (plan §2.6/§3.3) - es gibt keinen Besitzerwechsel mehr.
 """
 from __future__ import annotations
 
@@ -15,9 +20,19 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
+from .account import (
+    async_ensure_account_entry,
+    async_remove_account_entry,
+    async_setup_account_entry,
+    async_unload_account_entry,
+)
 from .const import (
+    CONF_ENTRY_KIND,
     CONF_USAGE_REFRESH_MINUTES,
     DOMAIN,
+    ENTRY_KIND_ACCOUNT,
+    ENTRY_KIND_WORKSPACE,
+    conf_entry_kind,
     migrate_entity_id,
     migrate_entity_name,
     token_unique_id,
@@ -141,8 +156,58 @@ async def _async_migrate_entity_ids(hass: HomeAssistant, entry: ConfigEntry) -> 
     return True
 
 
+async def _async_ensure_account_task(hass: HomeAssistant) -> None:
+    """Run the account ensure as a background task body - never raises.
+
+    Split out of :func:`async_setup` so the task itself cannot produce an
+    unretrieved task exception: ``async_ensure_account_entry`` is already fully
+    guarded, this is the second net for the "nobody awaits this task" case.
+    """
+    try:
+        await async_ensure_account_entry(hass)
+    except Exception as err:  # noqa: BLE001 - background task must never raise
+        _LOGGER.warning(
+            "Go Gauge: Konto-Entry beim HA-Start nicht sichergestellt (%s) - "
+            "Integration laeuft weiter", err)
+
+
+async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
+    """Domain-level setup: schedule the account-entry ensure (2.0.0, E2).
+
+    HA-SELF-AWAIT HAZARD - the ensure must NOT be awaited here. While the
+    domain is still being set up it is not listed in ``hass.config.components``,
+    and ``async_ensure_account_entry`` may await ``flow.async_init`` /
+    ``config_entries.async_setup``. That triggers the setup of an entry of THIS
+    domain, which in turn waits for the component setup that is currently
+    awaiting the ensure: a circular await that stalls the domain setup until
+    HA's 300 s timeout and then fails it.
+
+    The ensure therefore runs as its own task: ``hass.async_create_task`` starts
+    it immediately after the current callback yields, which is after the domain
+    setup has completed - it can never block (or be blocked by) this setup.
+    :func:`_async_ensure_account_task` keeps an exception inside the task.
+
+    The domain setup itself can never fail because of the account entry (plan
+    §2.6, §3.1, §7.3: "Domain-``async_setup`` schlaegt fehl -> return True
+    immer"); only a failing ``async_create_task`` (shutdown) is logged.
+    """
+    ensure_coro: Any = None
+    try:
+        ensure_coro = _async_ensure_account_task(hass)
+        hass.async_create_task(ensure_coro, name=f"{DOMAIN}_ensure_account")
+    except Exception as err:  # noqa: BLE001 - domain setup must never fail here
+        # A coroutine that was never scheduled must be closed explicitly,
+        # otherwise GC reports "coroutine was never awaited".
+        if ensure_coro is not None:
+            ensure_coro.close()
+        _LOGGER.warning(
+            "Go Gauge: Konto-Entry beim HA-Start nicht eingeplant (%s) - "
+            "Integration laeuft weiter", err)
+    return True
+
+
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate old config-entry versions to current (VERSION = 7).
+    """Migrate old config-entry versions to current (VERSION = 8).
 
     v1/v2: Monitor-Ara (host/port) -> token-basiert (Token-Liste uebernommen).
     v3:    Token-Liste uebernommen, Scan-Intervall (Sekunden) ->
@@ -157,12 +222,16 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     v7:    Bereits registrierte Entities von deutschen auf englische
            entity_id-Slugs umstellen (via Entity-Registry ``new_entity_id``);
            unique_id bleibt stabil, Kollisionen werden uebersprungen.
+    v8:    markiert jede Entry explizit mit ``entry_kind`` (workspace);
+           KEINE Registry-/Netz-Arbeit - O(1). Der Marker macht die Entry-Art
+           abfragbar, ohne auf fehlende Schluessel zu raten (die Konto-Entry
+           traegt ``account``, neue Workspaces schreiben ihn im Config-Flow).
     """
-    if entry.version > 7:
+    if entry.version > 8:
         return False
 
     _LOGGER.info(
-        "Go Gauge: migriere Config-Entry %s von Version %s auf 7",
+        "Go Gauge: migriere Config-Entry %s von Version %s auf 8",
         entry.entry_id, entry.version,
     )
 
@@ -233,6 +302,17 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "beim naechsten Start erneut", entry.entry_id, new_version,
             )
 
+    if new_version >= 7:
+        # v8: jede Entry explizit als Workspace markieren. Bewusst KEIN
+        # Registry-/Netz-Zugriff (B4) - reines Setzen eines Data-Keys, also
+        # O(1). Die Bedingung ">= 7" (statt "< 8") stellt sicher, dass ein
+        # GESCHEITERTER v7-Pass (new_version bleibt 6) NICHT auf 8 springt:
+        # sonst waere die Entity-ID-Migration stillschweigend endgueltig
+        # uebersprungen. ``setdefault`` haelt den Schritt idempotent und
+        # respektiert eine bereits gesetzte (kostueme) Markierung.
+        data.setdefault(CONF_ENTRY_KIND, ENTRY_KIND_WORKSPACE)
+        new_version = 8
+
     hass.config_entries.async_update_entry(
         entry,
         data=data,
@@ -244,7 +324,13 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up one Go Gauge workspace instance."""
+    """Set up one Go Gauge entry - account or workspace (2.0.0)."""
+    if conf_entry_kind(entry.data) == ENTRY_KIND_ACCOUNT:
+        # Account entries never reach the workspace path (no token, no usage
+        # coordinator): their runtime, adoption and ACCOUNT_PLATFORMS forward
+        # live in account.py (plan §2.6/§3.3).
+        return await async_setup_account_entry(hass, entry)
+
     token: str = str(entry.data.get("token") or "")
     ws_name: str = str(entry.data.get("workspace_name") or "").strip()
 
@@ -270,32 +356,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.warning(
             "Go Gauge %s: erster Abruf fehlgeschlagen (%s) - Setup laeuft weiter, "
             "HA retryt automatisch", ws_name or "WS", err)
-        # data initialisieren, damit Sensoren nicht auf None laufen
+        # data initialisieren, damit Sensoren nicht auf None laufen. Key-Set
+        # exakt wie im echten Usage-Snapshot (2.0.0, plan §2.7/M3): der
+        # Modell-Katalog lebt auf der Konto-Entry, nicht hier.
         coordinator.async_set_updated_data({
             "fetched_at": None,
             "last_usage_fetch": None,
-            "last_models_fetch": None,
+            "last_usage_ok": None,
+            "last_usage_attempt": None,
+            "last_usage_outcome": None,
             "auto_usage": coordinator.auto_usage,
-            "auto_models": coordinator.auto_models,
             "usage_refresh_minutes": coordinator.usage_minutes,
-            "models_refresh_minutes": coordinator.models_minutes,
             "workspaces": [],
-            "models_block": None,
         })
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # Katalog-Ownership: erste geladene Instanz legt die workspace-unabhaengigen
-    # Entities an (Modell-Katalog, Live-Count, Guenstigstes, Free, API erreichbar,
-    # Warnschwelle/Intervall-Settings). Weitere Instanzen: nur Workspace-Sensoren.
-    is_catalog_owner = "_catalog_owner" not in hass.data[DOMAIN]
-    coordinator.is_catalog_owner = is_catalog_owner
-    if is_catalog_owner:
-        hass.data[DOMAIN]["_catalog_owner"] = entry.entry_id
-
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # ONLY workspaces get the options listener: the account entry applies its
+    # settings live through the coordinator setters and must never reload
+    # (plan §6.4). That is also why there is no owner hand-over any more.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    # 2.0.0: a workspace becoming ready is the trigger that creates/loads the
+    # singleton account entry (plan §3.1/§7.3). Tolerant on purpose - a failure
+    # here must never fail the workspace setup (M5); ensure is additionally
+    # guarded internally, this is the second safety net.
+    try:
+        await async_ensure_account_entry(hass)
+    except Exception as err:  # noqa: BLE001 - workspace setup must not break
+        _LOGGER.warning(
+            "Go Gauge %s: Konto-Entry nicht sichergestellt (%s) - "
+            "Workspace-Setup laeuft weiter", ws_name or "WS", err)
     return True
 
 
@@ -311,17 +404,25 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    if conf_entry_kind(entry.data) == ENTRY_KIND_ACCOUNT:
+        return await async_unload_account_entry(hass, entry)
+
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        domain_data = hass.data.get(DOMAIN, {})
-        was_owner = domain_data.get("_catalog_owner") == entry.entry_id
-        domain_data.pop(entry.entry_id, None)
-        if was_owner:
-            domain_data.pop("_catalog_owner", None)
-            # Naechste noch geladene Instanz wird neuer Owner (Entities wandern)
-            for eid, coord in domain_data.items():
-                if isinstance(coord, GoGaugeCoordinator):
-                    coord.is_catalog_owner = True
-                    domain_data["_catalog_owner"] = eid
-                    break
+        # No owner marker / no ownership transfer (2.0.0): the account entry
+        # owns the catalog entities regardless of which workspace loads last
+        # (plan §2.6/§3.7). Only this entry's runtime object is dropped.
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle deletion of one Go Gauge entry (2.0.0).
+
+    Account entries delegate to ``account.async_remove_account_entry`` (deletes
+    the stable adoption repair issues and any ``hass.data`` leftovers). Removing
+    a workspace needs no domain-level cleanup - its coordinator and registry
+    object were already dropped by ``async_unload_entry``.
+    """
+    if conf_entry_kind(entry.data) == ENTRY_KIND_ACCOUNT:
+        await async_remove_account_entry(hass, entry)

@@ -58,17 +58,39 @@ def _load_module(name, path):
 
 # Load modules once at test collection time (not per-test fixtures)
 const = _load_module("go_gauge.const", str(BASE / "const.py"))
+_load_module("go_gauge.api", str(BASE / "api.py"))
+_load_module("go_gauge.catalog", str(BASE / "catalog.py"))
+_load_module("go_gauge.account_logic", str(BASE / "account_logic.py"))
 _load_module("go_gauge.coordinator", str(BASE / "coordinator.py"))
 _load_module("go_gauge.entity", str(BASE / "entity.py"))
 sensor = _load_module("go_gauge.sensor", str(BASE / "sensor.py"))
 
 
 class _FakeCoordinator:
-    """Minimal Coordinator mock for sensor testing."""
+    """Minimal ``AccountCoordinator`` mock for the catalog sensor tests.
+
+    Mirrors the surface the catalog sensors read (plan §2.9): ``data`` and the
+    ``models_block`` property return the same catalog block, plus the account
+    settings shown as attributes.
+    """
+
+    auto_fetch = True
+    base_interval_minutes = 60
+    last_models_outcome = "ok"
 
     def __init__(self, data):
         self.data = data
         self.last_update_success = True
+
+    @property
+    def models_block(self):
+        """Last successful catalog block (same object as ``data['models_block']``)."""
+        return self.data.get("models_block")
+
+    @property
+    def fetch_interval_minutes(self):
+        """Effective interval: base interval while auto-fetch is on."""
+        return self.base_interval_minutes if self.auto_fetch else None
 
 
 class _FakeEntry:
@@ -130,6 +152,13 @@ class TestModelCatalogSensor:
         assert attrs["live_count"] == 1
         assert attrs["free_models"] == ["model-b"]
         assert attrs["cheapest_model"] == "model-a"
+        # Account settings of the catalog sensor (plan §6.5/E4)
+        assert attrs["account_auto_update_models"] is True
+        assert attrs["account_fetch_interval_minutes"] == 60
+        assert attrs["account_models_refresh_minutes"] == 60
+        assert attrs["account_last_models_outcome"] == "ok"
+        # Account entities stay available: None is the "unknown" state.
+        assert cat.available is True
 
         # Verify catalog_json is valid JSON
         catalog = json.loads(attrs["catalog_json"])

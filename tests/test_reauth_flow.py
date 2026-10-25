@@ -114,10 +114,21 @@ def _load(name: str, path: str):
 
 
 const = _load("go_gauge.const", str(BASE / "const.py"))
+api = _load("go_gauge.api", str(BASE / "api.py"))
+_load("go_gauge.catalog", str(BASE / "catalog.py"))
+_load("go_gauge.account_logic", str(BASE / "account_logic.py"))
 coord = _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 _load("go_gauge.entity", str(BASE / "entity.py"))
 sensor_module = _load("go_gauge.sensor", str(BASE / "sensor.py"))
 config_flow = _load("go_gauge.config_flow", str(BASE / "config_flow.py"))
+# Load account.py before __init__: __init__ imports it relatively and the
+# offline `_load` loader only resolves sibling modules already present in
+# sys.modules under their dotted "go_gauge.*" name.
+# account.py binds ConfigEntryState at import time; a later-collected
+# module may have swapped the fake module object, so re-install the stable
+# double right before the import.
+conftest.install_config_entry_state_stub()
+_load("go_gauge.account", str(BASE / "account.py"))
 init_module = _load("go_gauge.__init__", str(BASE / "__init__.py"))
 
 
@@ -188,14 +199,13 @@ class _StubCoordinator(coord.GoGaugeCoordinator):
         self._client = client
         self.auto_usage = True
         self.usage_minutes = const.DEFAULT_USAGE_REFRESH_MINUTES
-        self.auto_models = False
-        self.models_minutes = const.DEFAULT_MODELS_REFRESH_MINUTES
         self.warn_percent = const.DEFAULT_WARN_PERCENT
         self._skip_reload = False
-        self.last_models_fetch = None
         self.last_usage_fetch = None
+        self.last_usage_attempt = None
+        self.last_usage_ok = None
+        self.last_usage_outcome = None
         self.data = data
-        self.is_catalog_owner = False
         self.last_update_success = True
 
 
@@ -205,7 +215,7 @@ class _StubCoordinator(coord.GoGaugeCoordinator):
 
 def test_client_fetch_usage_401_raises_go_gauge_auth_error():
     """[REQ-017] HTTP 401 raises GoGaugeAuthError, not a bare aiohttp error."""
-    client = coord.OpenCodeGoApiClient(_session_with(_mock_response(401)))
+    client = api.OpenCodeGoApiClient(_session_with(_mock_response(401)))
 
     with pytest.raises(const.GoGaugeAuthError) as excinfo:
         asyncio.run(client.fetch_usage("expired-token"))
@@ -221,7 +231,7 @@ def test_client_fetch_usage_403_entitlement_stays_no_subscription():
     """[REQ-017] HTTP 403 EntitlementError is NOT an auth case -> no_subscription."""
     body = {"error": {"type": "EntitlementError",
                       "message": "OpenCode Go subscription required."}}
-    client = coord.OpenCodeGoApiClient(_session_with(_mock_response(403, body)))
+    client = api.OpenCodeGoApiClient(_session_with(_mock_response(403, body)))
 
     result = asyncio.run(client.fetch_usage("valid-token"))
 
@@ -248,11 +258,15 @@ def test_coordinator_401_marks_auth_error_and_raises_auth_failed():
     assert ws["status"] == "auth_error"
     assert "401" in ws["note"]
     assert c.last_update_success is False
+    # 401 = the API ANSWERED but delivered no usage -> "neutral", not "fail".
+    assert c.last_usage_outcome == "neutral"
+    assert c.last_usage_attempt is not None
+    assert c.data["last_usage_outcome"] == "neutral"
 
 
 def test_coordinator_401_via_real_client_marks_auth_error():
     """[REQ-017] End-to-end: real 401 session -> client -> coordinator reauth."""
-    client = coord.OpenCodeGoApiClient(_session_with(_mock_response(401)))
+    client = api.OpenCodeGoApiClient(_session_with(_mock_response(401)))
     c = _StubCoordinator(client)
 
     with pytest.raises(coord.ConfigEntryAuthFailed):
@@ -437,7 +451,7 @@ async def test_setup_entry_reraises_auth_failed_and_cleans_registry():
     entry.options = {}
 
     hass = MagicMock()
-    hass.data = {"go_gauge": {"entry-auth": MagicMock(), "_catalog_owner": "entry-auth"}}
+    hass.data = {"go_gauge": {"entry-auth": MagicMock()}}
 
     async def _fail_first_refresh():
         raise init_module.ConfigEntryAuthFailed("HTTP 401")

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from typing import Any
 
 DOMAIN = "go_gauge"
@@ -51,6 +52,72 @@ DEFAULT_PACE_RED_PERCENT = 100
 DEFAULT_SCAN_INTERVAL = 600  # seconds (legacy)
 DEFAULT_USAGE_REFRESH_MINUTES = 10
 DEFAULT_MODELS_REFRESH_MINUTES = 60
+
+# --- Account entry (2.0.0) -------------------------------------------------
+# Since 2.0.0 the integration owns exactly one workspace-independent "account"
+# ConfigEntry next to N workspace entries. ``CONF_AUTO_UPDATE_MODELS`` and
+# ``CONF_MODELS_REFRESH_MINUTES`` above stay valid option keys, but from 2.0.0
+# on they belong *exclusively* to the account entry - workspaces no longer have
+# those two controls.
+ACCOUNT_ENTRY_UNIQUE_ID = f"{DOMAIN}_account"
+
+CONF_ENTRY_KIND = "entry_kind"
+ENTRY_KIND_ACCOUNT = "account"
+ENTRY_KIND_WORKSPACE = "workspace"
+
+# ``hass.data[DOMAIN]`` keys (all foreign, non-entry keys next to the per-entry
+# runtime objects):
+# * DATA_ACCOUNT_KEY - the shared account runtime object (the AccountCoordinator
+#   of the account entry, stored under the entry_id as well),
+# * DATA_ADOPTION_LOCK - the in-process adoption lock guarding the one-time
+#   entity adoption sweep,
+# * DATA_ADOPTION_REPORT - the last ``AdoptionReport`` of that sweep; the
+#   diagnostics export reads it so a support case can see what happened.
+DATA_ACCOUNT_KEY = "_account"
+DATA_ADOPTION_LOCK = "_adoption_lock"
+DATA_ADOPTION_REPORT = "_adoption_report"
+
+ACCOUNT_DEVICE_IDENTIFIER = "account"
+ACCOUNT_PLATFORMS = ["sensor", "binary_sensor", "button", "switch", "number"]
+
+# The account coordinator's own ``update_interval`` is this publish tick only -
+# it re-renders state/attributes from cached evidence and never performs HTTP.
+ACCOUNT_PUBLISH_TICK_MINUTES = 5
+
+DEFAULT_ACCOUNT_AUTO_UPDATE_MODELS = True
+DEFAULT_ACCOUNT_MODELS_REFRESH_MINUTES = 60
+ACCOUNT_MODELS_REFRESH_MIN = 1
+ACCOUNT_MODELS_REFRESH_MAX = 1440
+ACCOUNT_BACKOFF_MAX_MINUTES = 60
+
+# Evidence TTLs: models evidence lives 2x the *configured base* refresh
+# interval (not the backoff-extended effective one); usage evidence lives 3x
+# the workspace's usage interval. With auto-refresh off there is no base
+# interval to scale, so the fallback below applies.
+MODELS_TTL_FACTOR = 2
+USAGE_TTL_FACTOR = 3
+MODELS_TTL_FALLBACK_MINUTES = MODELS_TTL_FACTOR * DEFAULT_ACCOUNT_MODELS_REFRESH_MINUTES
+
+ENTITY_NAME_ACCOUNT = "Go Gauge Konto"
+
+
+def conf_entry_kind(data: Mapping[str, Any] | None) -> str:
+    """Return the entry kind recorded in a ConfigEntry's ``data`` dict.
+
+    Defaults to ``ENTRY_KIND_WORKSPACE`` so every entry created before 2.0.0
+    (which carries no ``entry_kind`` key at all) keeps being treated as a
+    workspace. HA-free and total: a missing key, an empty/non-string value or
+    even a non-mapping argument all fall back to the default, so the return
+    value is always a ``str``. The value is deliberately NOT coerced with
+    ``str()`` - an entry carrying e.g. ``1`` is corrupt, not the string "1".
+    """
+    if not isinstance(data, Mapping):
+        return ENTRY_KIND_WORKSPACE
+    kind = data.get(CONF_ENTRY_KIND)
+    if isinstance(kind, str) and kind:
+        return kind
+    return ENTRY_KIND_WORKSPACE
+
 
 WINDOW_LABELS = {"5h": "5h rolling", "week": "Weekly", "month": "Monthly"}
 

@@ -251,17 +251,94 @@ class TestUniqueIdBehavior:
 class TestConfigFlowVersion:
     """Tests for config flow version constant."""
 
-    def test_config_flow_version_is_seven(self):
-        """[AUDIT-P2-11] Config flow VERSION should be 7 (current migration target).
+    def test_config_flow_version_is_eight(self):
+        """[AUDIT-P2-11] Config flow VERSION should be 8 (current migration target).
 
         Bumped from 4 to 5 for the SHA-256 unique_id migration, from 5 to 6 for
-        the German->English entity-name migration and from 6 to 7 for the
-        German->English entity_id slug migration.
+        the German->English entity-name migration, from 6 to 7 for the
+        German->English entity_id slug migration and from 7 to 8 for the
+        explicit entry_kind marker (2.0.0 account entry).
         Verifies the constant in GoGaugeConfigFlow class.
         """
         # Import the real VERSION from the module
         assert hasattr(config_flow.GoGaugeConfigFlow, "VERSION")
-        assert config_flow.GoGaugeConfigFlow.VERSION == 7
+        assert config_flow.GoGaugeConfigFlow.VERSION == 8
+
+
+class TestWorkspaceOptionsFlow:
+    """[PLAN2-E4] The workspace options flow no longer offers model settings.
+
+    ``auto_update_models`` / ``models_refresh_minutes`` moved to the account
+    entry in 2.0.0 (plan §6.1): a workspace performs no catalog fetch, so those
+    controls would change nothing. Everything else about the workspace options
+    stays untouched.
+    """
+
+    @pytest.mark.asyncio
+    async def test_workspace_options_flow_has_no_model_fields(self):
+        """[PLAN2-E4] Schema keeps the usage options, drops both model fields."""
+        from unittest.mock import MagicMock
+
+        entry = conftest.StrictConfigEntry(
+            entry_id="ws-entry",
+            data={"workspace_name": "WS", "token": "tok"},
+        )
+        flow = config_flow.GoGaugeOptionsFlowHandler(entry)
+        flow.hass = MagicMock()
+        flow.async_show_form = MagicMock(return_value={"type": "form"})
+
+        result = await flow.async_step_init(None)
+
+        assert result == {"type": "form"}
+        kwargs = flow.async_show_form.call_args.kwargs
+        assert kwargs["step_id"] == "init"
+        keys = {str(key) for key in kwargs["data_schema"].schema}
+        assert const.CONF_AUTO_UPDATE_MODELS not in keys
+        assert const.CONF_MODELS_REFRESH_MINUTES not in keys
+        assert keys == {
+            "workspace_name",
+            "warn_percent",
+            "pace_red_percent",
+            "auto_update_usage",
+            "usage_refresh_minutes",
+        }
+
+
+class TestUserFlowEntryKind:
+    """[PLAN2-A1] Every entry created by the user flow carries its entry kind.
+
+    The flow machinery itself (``async_create_entry`` / unique_id handling) is
+    provided by Home Assistant; the offline fakes do not implement it, so the
+    flow object is instantiated and those base methods are replaced by doubles.
+    That is enough to assert the *data contract* of the created entry.
+    """
+
+    @pytest.mark.asyncio
+    async def test_user_flow_writes_entry_kind(self):
+        """[PLAN2-A1] async_step_user stores entry_kind=workspace in entry.data."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        flow = config_flow.GoGaugeConfigFlow()
+        flow.hass = MagicMock()
+        flow.context = {}
+        flow.async_set_unique_id = AsyncMock()
+        flow._abort_if_unique_id_configured = MagicMock()
+        flow.async_create_entry = MagicMock(return_value={"type": "create_entry"})
+
+        result = await flow.async_step_user({
+            "workspace_name": "My WS",
+            "token": "tok-abc",
+            "skip_validation": True,
+        })
+
+        assert result == {"type": "create_entry"}
+        flow.async_create_entry.assert_called_once()
+        data = flow.async_create_entry.call_args.kwargs["data"]
+        assert data[const.CONF_ENTRY_KIND] == const.ENTRY_KIND_WORKSPACE
+        assert data["workspace_name"] == "My WS"
+        assert data["token"] == "tok-abc"
+        # The workspace flow never marks an entry as the account entry.
+        assert data[const.CONF_ENTRY_KIND] != const.ENTRY_KIND_ACCOUNT
 
 
 if __name__ == "__main__":

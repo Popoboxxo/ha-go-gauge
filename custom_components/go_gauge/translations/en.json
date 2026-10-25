@@ -36,9 +36,14 @@
           "workspace_name": "Workspace name",
           "warn_percent": "Warning threshold (%)",
           "auto_update_usage": "Auto-update usage",
-          "usage_refresh_minutes": "Usage refresh interval (minutes)",
-          "auto_update_models": "Auto-update models",
-          "models_refresh_minutes": "Models refresh interval (minutes)"
+          "usage_refresh_minutes": "Usage refresh interval (minutes)"
+        }
+      },
+      "account": {
+        "title": "Go Gauge account options",
+        "data": {
+          "auto_update_models": "Update models automatically",
+          "models_refresh_minutes": "Models: refresh interval (minutes)"
         }
       }
     }
@@ -118,7 +123,32 @@
     "button": {
       "refresh": {
         "name": "Refresh"
+      },
+      "refresh_account": {
+        "name": "Refresh account"
       }
+    }
+  },
+  "issues": {
+    "account_entity_collision": {
+      "title": "Go Gauge: duplicate account entity",
+      "description": "There are multiple registry entries for the account entity \"{kind}\". {winner} is kept; the duplicates ({losers}) have been disabled. Please delete the disabled entries after checking them."
+    },
+    "account_device_merged": {
+      "title": "Go Gauge: duplicate account device removed",
+      "description": "Empty duplicate devices were removed: {device}. All account entities now belong to the \"Go Gauge Konto\" device."
+    },
+    "account_device_not_empty": {
+      "title": "Go Gauge: duplicate device could not be removed",
+      "description": "The device {device} is not empty yet (remaining entities or child devices) and has been left in place. Please check the remaining entries and remove the device manually afterwards."
+    },
+    "adoption_unsupported": {
+      "title": "Go Gauge: account device transfer not supported",
+      "description": "This Home Assistant version cannot move a device to another config entry ({error}). The integration keeps running; please update Home Assistant to 2026.8.0 or newer."
+    },
+    "adoption_failed": {
+      "title": "Go Gauge: account entity adoption incomplete",
+      "description": "The account entity adoption reported {count} error(s). The integration keeps running and retries the adoption on the next start; see the log for details."
     }
   }
 }

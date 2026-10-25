@@ -77,6 +77,9 @@ def _load(name: str, path: str):
 
 
 const = _load("go_gauge.const", str(BASE / "const.py"))
+_load("go_gauge.api", str(BASE / "api.py"))
+_load("go_gauge.catalog", str(BASE / "catalog.py"))
+_load("go_gauge.account_logic", str(BASE / "account_logic.py"))
 coord = _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 _load("go_gauge.entity", str(BASE / "entity.py"))
 sensor = _load("go_gauge.sensor", str(BASE / "sensor.py"))
@@ -364,14 +367,13 @@ class _MockUsageCoordinator:
         self._client = _MockUsageClient(response, error)
         self.auto_usage = True
         self.usage_minutes = const.DEFAULT_USAGE_REFRESH_MINUTES
-        self.auto_models = False
-        self.models_minutes = const.DEFAULT_MODELS_REFRESH_MINUTES
         self.warn_percent = const.DEFAULT_WARN_PERCENT
         self._skip_reload = False
-        self.last_models_fetch = None
         self.last_usage_fetch = None
+        self.last_usage_attempt = None
+        self.last_usage_ok = None
+        self.last_usage_outcome = None
         self.data = None
-        self.is_catalog_owner = False
         self._usage_samples: dict = {}
 
 
@@ -450,7 +452,6 @@ class _FakeCoordinator:
     samples. A dict is intentional - sensor.py calls `.get(...)` on it.
     """
 
-    is_catalog_owner = False
     ws_name = "Work"
     _usage_samples: dict = {}
 
@@ -460,6 +461,7 @@ class _FakeCoordinator:
 
 class _FakeEntry:
     entry_id = "test_entry"
+    data: dict = {}  # no entry_kind -> conf_entry_kind() defaults to workspace
 
 
 class _FakeHass:
@@ -493,7 +495,6 @@ def test_derived_usage_sensors_wired_per_window():
                 },
             },
         }],
-        "models_block": None,
     }
     coordinator = _FakeCoordinator(data)
     # Distinct burn-rate slopes per window so a window/label swap is visible.
@@ -535,7 +536,6 @@ def test_burn_rate_sensor_defaults_to_empty_samples():
             "status": "ok",
             "windows": {"5h": {"percent": 10.0, "status": "ok", "resets_at": None}},
         }],
-        "models_block": None,
     })
     entry = _FakeEntry()
     entity = sensor.BurnRateSensor(
@@ -561,7 +561,6 @@ def test_derived_usage_sensor_unique_ids_per_window():
                 "month": {"percent": 77.0, "status": "ok", "resets_at": None},
             },
         }],
-        "models_block": None,
     }
     coordinator = _FakeCoordinator(data)
     hass = _FakeHass(coordinator)

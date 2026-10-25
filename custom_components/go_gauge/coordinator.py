@@ -1,8 +1,14 @@
 """Go Gauge HA - Data coordinator talking DIRECTLY to opencode.ai.
 
-Two independent refresh cycles (both can be switched off in options):
-- Usage  (per workspace tokens): default every 10 min
-- Models (public catalog):       default every 60 min
+Since 2.0.0 this coordinator owns exactly ONE refresh cycle: the per-workspace
+usage windows (default every 10 min, switchable in the options). The model
+catalog moved to the workspace-independent ``AccountCoordinator``
+(``account.py``) - see ``docs/PLAN-account-entry-2.0.0.md`` §2.7/§2.9.
+
+Every cycle also records its own evidence timestamps (``last_usage_attempt`` /
+``last_usage_ok`` / ``last_usage_outcome``) so the account-level reachability
+sensor can resolve the API state without guessing from ``last_update_success``
+(plan §5).
 
 Cloudflare note: plain urllib/requests get blocked (HTTP 403 Error 1010);
 aiohttp WITH full browser headers succeeds (verified live 2026-08-22).
@@ -13,31 +19,22 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import aiohttp
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
+from .api import OpenCodeGoApiClient
 from .const import (
-    CONF_AUTO_UPDATE_MODELS,
     CONF_AUTO_UPDATE_USAGE,
-    CONF_MODELS_REFRESH_MINUTES,
     CONF_USAGE_REFRESH_MINUTES,
-    DEFAULT_MODELS_REFRESH_MINUTES,
-    DEFAULT_SCAN_INTERVAL,
     DEFAULT_USAGE_REFRESH_MINUTES,
     DOMAIN,
-    PRICING,
-    USER_AGENT,
     WINDOW_SECONDS,
     GoGaugeAuthError,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-MODELS_URL = "https://opencode.ai/zen/go/v1/models"
-USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
 
 # Burn-rate lookback window: only the last 2h of usage samples feed the
 # %/h slope. A full hour-plus of history keeps the slope stable across the
@@ -46,50 +43,6 @@ BURN_RATE_LOOKBACK_SECONDS = 2 * 3600
 # Minimum time span between the oldest and newest sample for a meaningful
 # slope - below 5min the quotient amplifies poll jitter into noise.
 BURN_RATE_MIN_SPAN_SECONDS = 300
-
-BROWSER_HEADERS = {
-    "User-Agent": USER_AGENT,
-    "Accept": "application/json",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Origin": "https://opencode.ai",
-}
-
-
-def _pnum(v: Any) -> float | None:
-    """Peak/off-peak tuple -> mean; scalar -> itself."""
-    if isinstance(v, (tuple, list)) and v:
-        vals = [x for x in v if isinstance(x, (int, float))]
-        return sum(vals) / len(vals) if vals else None
-    return v if isinstance(v, (int, float)) else None
-
-
-def efficiency(prices: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Cost-benefit ratio per model.
-
-    - usd_per_1m_mixed = 80% input + 20% output
-    - month_req_per_usd = official monthly request estimate / 60 USD budget
-    - free models: usd=0.0, req_per_usd=None (ranked first)
-    """
-    if prices is None:
-        return None
-    if prices.get("free"):
-        return {"usd_per_1m_mixed": 0.0, "month_req_per_usd": None, "free": True}
-    try:
-        in_price = _pnum(prices["in"])
-        out_price = _pnum(prices["out"])
-        mixed: float | None = None
-        if in_price is not None and out_price is not None:
-            mixed = 0.8 * in_price + 0.2 * out_price
-    except (KeyError, TypeError):
-        mixed = None
-    req_m = (prices.get("req") or [None, None, None])[2]
-    rpd = (req_m / 60.0) if isinstance(req_m, (int, float)) and req_m else None
-    return {
-        "usd_per_1m_mixed": round(mixed, 3) if mixed is not None else None,
-        "month_req_per_usd": round(rpd, 1) if rpd else None,
-        "free": False,
-    }
-
 
 def window_elapsed_fraction(win: str, resets_at: datetime | None,
                              now: datetime | None = None) -> float | None:
@@ -205,50 +158,6 @@ def burn_rate_per_hour(samples: list[tuple[datetime, float]] | None,
     return round(rate, 2)
 
 
-class OpenCodeGoApiClient:
-    """Thin async client for the two Zen Go endpoints."""
-
-    def __init__(self, session: aiohttp.ClientSession) -> None:
-        self._session = session
-
-    async def fetch_models(self) -> list[str]:
-        async with self._session.get(MODELS_URL, headers=BROWSER_HEADERS,
-                                     timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            resp.raise_for_status()
-            data = await resp.json(content_type=None)
-        return [m.get("id") for m in data.get("data", []) if m.get("id")]
-
-    async def fetch_usage(self, token: str) -> dict[str, Any]:
-        headers = {**BROWSER_HEADERS, "Authorization": f"Bearer {token}"}
-        async with self._session.get(USAGE_URL, headers=headers,
-                                     timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            if resp.status == 401:
-                # Token fehlt/ungueltig/abgelaufen - KEIN transienter Fehler,
-                # sondern ein Konfigurationsproblem. Gezielt als GoGaugeAuthError
-                # melden; der Coordinator uebersetzt das in ConfigEntryAuthFailed
-                # und startet damit HAs Reauth-Flow statt still alte Daten zu
-                # behalten. (403 bleibt unten UNVERAENDERT behandelt.)
-                raise GoGaugeAuthError("HTTP 401 - token invalid/expired")
-            if resp.status == 403:
-                # 403 hat ZWEI Ursachen - sauber trennen:
-                # a) EntitlementError = kein aktives Abo (gueltiger Token)
-                # b) Cloudflare-Rate-Limit/Bot-Score = TRANSIENTER Fehler
-                try:
-                    body = await resp.json(content_type=None)
-                except Exception:  # noqa: BLE001
-                    body = {}
-                err = (body.get("error") or {})
-                if err.get("type") == "EntitlementError":
-                    return {"usage": {}, "status": "no_subscription",
-                            "note": err.get("message", "OpenCode Go subscription required.")}
-                # Kein Entitlement-Fehler -> als Fehler melden (mit Retry sinnvoll)
-                return {"usage": {}, "status": "error",
-                        "note": f"HTTP 403 ({err.get('type') or 'blocked'}) - "
-                                "möglicherweise Rate-Limit"}
-            resp.raise_for_status()
-            return await resp.json(content_type=None)
-
-
 def _parse_reset(resets_at: str | None) -> datetime | None:
     if not resets_at:
         return None
@@ -261,56 +170,18 @@ def _parse_reset(resets_at: str | None) -> datetime | None:
         return None
 
 
-def build_models_block(live_ids: list[str] | None) -> dict[str, Any]:
-    """Workspace-independent model catalog (one JSON blob for one sensor).
-
-    Fix 2026-09-05 (User-Report): Free/cheapest/ranking werden NUR ueber
-    live-gelistete Modelle berechnet. Ein statisch in PRICING gepflegtes
-    Modell, das die API nicht mehr listet (z. B. ox-alpha-free), bleibt
-    zwar im Katalog-Listing sichtbar (live: false), darf aber Free-Modelle/
-    Günstigstes nicht mehr belegen. Bei live_ids=None (noch nie erfolgreich
-    geladen) ist kein Live-Filter moeglich -> vorheriges Verhalten.
-    """
-    known = set(PRICING.keys())
-    models = []
-    for mid in sorted(set(live_ids or []) | known):
-        p = PRICING.get(mid)
-        models.append({
-            "id": mid,
-            "live": mid in (live_ids or []) if live_ids is not None else None,
-            "free": bool(p and p.get("free")),
-            "pricing_known": p is not None,
-            **(efficiency(p) or {}),
-        })
-    usable = [m for m in models if m.get("live") is not False]
-    ranked = sorted(
-        [m for m in usable if m.get("usd_per_1m_mixed") is not None],
-        key=lambda m: m["usd_per_1m_mixed"],
-    )
-    paid_ranked = [m for m in ranked if not m["free"]]
-    return {
-        "model_count_live": len(live_ids or []),
-        "models": models,
-        "cheapest_model": paid_ranked[0]["id"] if paid_ranked else None,
-        "cheapest_overall": ranked[0]["id"] if ranked else None,
-        "cheapest_ratio": (paid_ranked[0].get("usd_per_1m_mixed") if paid_ranked else None),
-        "free_models": [m["id"] for m in usable if m["free"]],
-        "models_updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-
 class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Two-cycle coordinator: usage (fast) + models (slow), each toggleable.
+    """Usage-only coordinator for one workspace.
 
-    auto_update off => no scheduled polling at all; only the refresh button
-    (or a manual service call) triggers an update.
+    ``auto_update_usage`` off => ``update_interval`` is ``None``: no scheduled
+    polling at all, only the refresh button (or a manual service call) triggers
+    an update (plan §11.1 R9 - deliberately no 24h fallback anymore).
     """
 
-    # Set by the config-entry setup after construction (workspace display name
-    # and catalog-ownership flag). Declared here so platform entities that read
-    # them type-check against GoGaugeCoordinator instead of the HA base type.
+    # Set by the config-entry setup after construction (workspace display name).
+    # Declared here so platform entities that read it type-check against
+    # GoGaugeCoordinator instead of the HA base type.
     ws_name: str
-    is_catalog_owner: bool
     # Explicit type: the auth path assigns ``self.data`` from a snapshot that is
     # derived from a previous ``self.data`` read (circular inference otherwise:
     # "Cannot determine type of data"). The HA base class is skipped by mypy
@@ -328,9 +199,6 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.auto_usage = options.get(CONF_AUTO_UPDATE_USAGE, True)
         self.usage_minutes = int(
             options.get(CONF_USAGE_REFRESH_MINUTES, DEFAULT_USAGE_REFRESH_MINUTES))
-        self.auto_models = options.get(CONF_AUTO_UPDATE_MODELS, True)
-        self.models_minutes = int(
-            options.get(CONF_MODELS_REFRESH_MINUTES, DEFAULT_MODELS_REFRESH_MINUTES))
         # Warnschwelle + Ampel-Rot-Grenze als Runtime-Attribute (Number-Entities
         # schreiben sie live)
         from .const import (  # local import: no cycle at import time
@@ -344,45 +212,40 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Flag: Runtime-Entities persistieren Optionen ohne Entry-Reload
         self._skip_reload = False
 
-        # Gesamtintervall: das schnellere aktive Intervall; wenn alles aus ->
-        # sehr langer Intervall (nur Button aktualisiert dann wirklich).
-        intervals = []
-        if self.auto_usage:
-            intervals.append(self.usage_minutes * 60)
-        if self.auto_models:
-            intervals.append(self.models_minutes * 60)
-        effective = min(intervals) if intervals else 86400  # 24h Fallback
+        # Usage-only interval: the account entry owns the catalog cycle and its
+        # own publish tick. Auto-update off -> no scheduled polling at all
+        # (``None``), never a fake 24h interval (plan §11.1 R9).
+        interval = timedelta(minutes=self.usage_minutes) if self.auto_usage else None
 
-        super().__init__(
-            hass, _LOGGER, name=DOMAIN,
-            update_interval=timedelta(seconds=effective or DEFAULT_SCAN_INTERVAL),
-        )
+        super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=interval)
         # Zeitstempel der letzten echten Abrufe je Zyklus
-        self.last_models_fetch: datetime | None = None
         self.last_usage_fetch: datetime | None = None
+        # Evidence of the last usage cycle (plan §5): ``attempt`` is written on
+        # EVERY run, ``ok`` only on a successful fetch, ``outcome`` is one of
+        # "ok"/"neutral"/"fail" (see ``_async_update_data``).
+        self.last_usage_attempt: datetime | None = None
+        self.last_usage_ok: datetime | None = None
+        self.last_usage_outcome: str | None = None
         # Usage-Verlauf je Workspace-Fenster ("ws1:5h") -> [(ts, percent)],
         # Basis der Burn-Rate-Berechnung (on-read, kein Reset-Job).
         self._usage_samples: dict[str, list[tuple[datetime, float]]] = {}
 
     def recalculate_interval(self) -> None:
-        """Intervall nach Auto-Update-Schaltern/Minuten NEU setzen (live).
+        """Intervall nach Auto-Update-Schalter/Minuten NEU setzen (live).
 
         Der Setter von ``update_interval`` speichert nur den neuen Wert; ein
         bereits laufender Refresh-Timer laeuft sonst mit dem ALTEN Intervall
         weiter. ``_schedule_refresh()`` meldet den scharfen Timer ab und plant
         den naechsten Abruf mit dem neuen Intervall.
+
+        Usage-only: the catalog cycle lives on the account entry, so this
+        coordinator never schedules a models fetch (2.0.0, plan §2.7).
         """
-        intervals = []
-        if self.auto_usage:
-            intervals.append(self.usage_minutes * 60)
-        if self.auto_models:
-            intervals.append(self.models_minutes * 60)
-        effective = min(intervals) if intervals else 86400
-        self.update_interval = timedelta(seconds=effective)
+        interval = timedelta(minutes=self.usage_minutes) if self.auto_usage else None
+        self.update_interval = interval
         self._schedule_refresh()
-        _LOGGER.info("Go Gauge: Update-Intervall -> %s s (usage=%s/%smin, models=%s/%smin)",
-                     effective, self.auto_usage, self.usage_minutes,
-                     self.auto_models, self.models_minutes)
+        _LOGGER.info("Go Gauge: Update-Intervall -> %s (usage=%s/%s min)",
+                     interval, self.auto_usage, self.usage_minutes)
 
     def _record_usage_sample(self, key: str, win: str, percent: float,
                              now: datetime) -> None:
@@ -414,7 +277,6 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self,
         now: datetime,
         usage: list[dict[str, Any]],
-        models_block: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Build the coordinator snapshot returned by ``_async_update_data``.
 
@@ -422,35 +284,43 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         published shape (keys, timestamps, toggles) stays identical. The auth
         path uses it to publish a snapshot that marks the affected workspace
         with ``status="auth_error"`` BEFORE raising ``ConfigEntryAuthFailed``.
+
+        The key set is exact (plan §2.7/M3): the model catalog lives on the
+        account coordinator, so no catalog key appears here anymore.
         """
         return {
             "fetched_at": now.isoformat(),
             "last_usage_fetch": (
                 self.last_usage_fetch.isoformat() if self.last_usage_fetch else None
             ),
-            "last_models_fetch": (
-                self.last_models_fetch.isoformat() if self.last_models_fetch else None
+            "last_usage_ok": (
+                self.last_usage_ok.isoformat() if self.last_usage_ok else None
             ),
+            "last_usage_attempt": (
+                self.last_usage_attempt.isoformat()
+                if self.last_usage_attempt
+                else None
+            ),
+            "last_usage_outcome": self.last_usage_outcome,
             "auto_usage": self.auto_usage,
-            "auto_models": self.auto_models,
             "usage_refresh_minutes": self.usage_minutes,
-            "models_refresh_minutes": self.models_minutes,
             "workspaces": usage,
-            "models_block": models_block,
         }
 
     async def _async_update_data(self) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
+
+        # Evidence bookkeeping (plan §5): an ATTEMPT happens on every run, even
+        # when no usage fetch is due - the reachability matrix needs to know
+        # when the coordinator last ran. The outcome/ok timestamps are only
+        # touched when a fetch actually happened (see the cycle end below).
+        self.last_usage_attempt = now
 
         # --- Usage-Zyklus -----------------------------------------------------
         # WICHTIG: Bei Fehlern NICHT die alten Daten verwerfen (kein Unbekannt!),
         # sondern letzten Stand behalten und Fehler nur als Attribut melden.
         prev_ws = {w["key"]: w for w in ((self.data or {}).get("workspaces") or [])}
         usage = list((self.data or {}).get("workspaces") or [])
-        # Capture the previous catalog block once: the auth path below needs it
-        # while publishing a fresh snapshot (and reading it here keeps the
-        # later ``self.data = ...`` assignment free of a self-referential read).
-        prev_models = (self.data or {}).get("models_block")
         usage_due = (
             self._tokens
             and (self.auto_usage
@@ -459,9 +329,9 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             and (self.last_usage_fetch is None
                  or now - self.last_usage_fetch >= timedelta(minutes=self.usage_minutes))
         )
+        ok_any = False
         if usage_due:
             fresh = []
-            ok_any = False
             # Sammelt fehlende erwartete Felder ueber alle Workspaces dieses
             # Update-Zyklus, damit nur EINE aggregierte Warnung geloggt wird
             # (kein Log-Spam pro Workspace/Fenster).
@@ -541,7 +411,13 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # if a future raise ever carries an empty message.
                     entry["note"] = str(err) or "HTTP 401 - token invalid/expired"
                     fresh.append(entry)
-                    self.data = self._snapshot(now, fresh, prev_models)
+                    # 401 proves the API ANSWERED but not that it delivered
+                    # usage data: "neutral" (plan §5), never "fail". Attempt and
+                    # snapshot are published before the raise so the status
+                    # sensors can name the cause (unchanged behaviour).
+                    self.last_usage_attempt = now
+                    self.last_usage_outcome = "neutral"
+                    self.data = self._snapshot(now, fresh)
                     self.last_update_success = False
                     raise ConfigEntryAuthFailed(
                         "opencode.ai rejected the API token (HTTP 401)") from err
@@ -578,42 +454,19 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "Go Gauge: kein Workspace mit aktiven Nutzungsdaten "
                     "(alle no_subscription/error)")
 
-        # --- Modell-Zyklus ----------------------------------------------------
-        # NUR der Catalog-Owner ruft fetch_models() auf! Bei N Instanzen sonst
-        # N-fache Requests -> Cloudflare-Rate-Limit -> "Modelle spackt".
-        # Nicht-Owner: leeren Katalog melden (ihre Entities existieren eh nicht).
-        models_block = (self.data or {}).get("models_block")
-        if not getattr(self, "is_catalog_owner", True):
-            models_due = False
-            models_block = models_block or {"model_count_live": 0, "models": [],
-                                            "shared": True}
-        else:
-            models_due = (
-                self.auto_models
-                and (models_block is None
-                     or now - (self.last_models_fetch or now)
-                     >= timedelta(minutes=self.models_minutes))
-            )
-            if models_block is None and not self.auto_models:
-                # Erster Start mit ausgeschaltetem Auto-Models: einmal laden
-                models_due = True
-        if models_due:
-            try:
-                live_ids = await self._client.fetch_models()
-                models_block = build_models_block(live_ids)
-                self.last_models_fetch = now
-                self.models_fetch_errors = 0
-            except Exception as err:  # noqa: BLE001
-                self.models_fetch_errors = getattr(self, "models_fetch_errors", 0) + 1
-                if models_block is None:
-                    # Noch nie erfolgreich -> Fehler nur beim ERSTEN Versuch hart,
-                    # danach degradiert weiterlaufen (HA-Default-Retry bleibt aktiv).
-                    if self.models_fetch_errors >= 3:
-                        raise UpdateFailed(
-                            f"Modell-Katalog nicht abrufbar: {err}") from err
-                    _LOGGER.warning("Go Gauge: Modell-Abruf fehlgeschlagen (%s) - "
-                                    "versuche weiter", err)
-                else:
-                    _LOGGER.warning("Modell-Refresh fehlgeschlagen, nutze alten Stand: %s", err)
+            # Cycle end evidence (plan §5/§8.3): a fresh success is the only
+            # thing that refreshes ``last_usage_ok``; an answer without any
+            # success (no subscription, 401) is "neutral"; everything else is a
+            # failure. No fetch this run -> keep the previous outcome (a plain
+            # publish tick must not invent a failure).
+            if ok_any:
+                self.last_usage_ok = now
+                self.last_usage_outcome = "ok"
+            elif all(
+                w.get("status") in ("no_subscription", "auth_error") for w in usage
+            ):
+                self.last_usage_outcome = "neutral"
+            else:
+                self.last_usage_outcome = "fail"
 
-        return self._snapshot(now, usage, models_block)
+        return self._snapshot(now, usage)

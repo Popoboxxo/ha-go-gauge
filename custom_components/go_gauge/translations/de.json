@@ -36,7 +36,12 @@
           "workspace_name": "Workspace-Name",
           "warn_percent": "Warnschwelle in Prozent",
           "auto_update_usage": "Nutzung automatisch aktualisieren",
-          "usage_refresh_minutes": "Nutzung: Refresh-Intervall (Minuten)",
+          "usage_refresh_minutes": "Nutzung: Refresh-Intervall (Minuten)"
+        }
+      },
+      "account": {
+        "title": "Go Gauge Konto — Optionen",
+        "data": {
           "auto_update_models": "Modelle automatisch aktualisieren",
           "models_refresh_minutes": "Modelle: Refresh-Intervall (Minuten)"
         }
@@ -118,7 +123,32 @@
     "button": {
       "refresh": {
         "name": "Aktualisieren"
+      },
+      "refresh_account": {
+        "name": "Konto aktualisieren"
       }
+    }
+  },
+  "issues": {
+    "account_entity_collision": {
+      "title": "Go Gauge: doppelte Konto-Entität",
+      "description": "Für die Konto-Entität „{kind}“ gibt es mehrere Registry-Einträge. Behalten wird {winner}; die Duplikate ({losers}) wurden deaktiviert. Bitte die deaktivierten Einträge nach Prüfung löschen."
+    },
+    "account_device_merged": {
+      "title": "Go Gauge: doppeltes Konto-Gerät entfernt",
+      "description": "Leere Duplikat-Geräte wurden entfernt: {device}. Alle Konto-Entitäten hängen jetzt am Gerät „Go Gauge Konto“."
+    },
+    "account_device_not_empty": {
+      "title": "Go Gauge: Duplikat-Gerät konnte nicht entfernt werden",
+      "description": "Das Gerät {device} ist noch nicht leer (verbleibende Entitäten oder Untergeräte) und bleibt deshalb bestehen. Bitte die verbleibenden Einträge prüfen und das Gerät danach manuell entfernen."
+    },
+    "adoption_unsupported": {
+      "title": "Go Gauge: Übernahme des Konto-Geräts nicht unterstützt",
+      "description": "Diese Home-Assistant-Version kann ein Gerät nicht auf eine andere Config-Entry übertragen ({error}). Die Integration läuft weiter; bitte Home Assistant auf 2026.8.0 oder neuer aktualisieren."
+    },
+    "adoption_failed": {
+      "title": "Go Gauge: Übernahme der Konto-Entitäten unvollständig",
+      "description": "Bei der Übernahme der Konto-Entitäten sind {count} Fehler aufgetreten. Die Integration läuft weiter und wiederholt die Übernahme beim nächsten Start; Details stehen im Protokoll."
     }
   }
 }
