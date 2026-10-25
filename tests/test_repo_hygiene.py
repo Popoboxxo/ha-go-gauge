@@ -515,3 +515,47 @@ def test_readme_compatibility_and_help_sections() -> None:
         assert re.search(r"(?mi)^#{1,6}\s*(?:diagnostics|diagnose)\b", text), (
             f"{name} has no Diagnostics/Diagnose section heading"
         )
+
+
+# --- 14. entity-ID policy docs --------------------------------------------
+
+
+def test_readmes_explain_entity_names_and_ids() -> None:
+    """[REPO-HYGIENE] Both READMEs carry an entity-ID policy section.
+
+    ``unique_id`` and ``entity_id`` are the two identifiers a user meets in the
+    entity settings, and they behave in opposite ways: the ``unique_id`` is
+    written once by the integration and must never change, the ``entity_id`` is
+    derived from the (localized, user-editable) name and *can* change. Mixing
+    them up is the classic "my dashboard broke after the update" report, so each
+    language needs its own section heading plus an explicit mention of both
+    terms.
+
+    The headings are matched line-anchored and case-insensitively, built with
+    ``re.escape`` instead of hand-written character classes - ``README.de.md``
+    carries a non-ASCII heading (``Entitätsnamen``) and the docs are free to use
+    typographic quotes around the terms, which a literal pattern would break on.
+    """
+    sections = (
+        (README_EN, "Entity names and entity IDs"),
+        (README_DE, "Entitätsnamen und Entity-IDs"),
+    )
+    for path, heading in sections:
+        text = _read(path)
+        name = path.relative_to(REPO_ROOT)
+
+        heading_re = re.compile(
+            rf"^[ \t]*##[ \t]*{re.escape(heading)}[ \t]*$",
+            re.MULTILINE | re.IGNORECASE,
+        )
+        assert heading_re.search(text), (
+            f"{name} has no '## {heading}' section heading explaining the "
+            "entity-ID policy"
+        )
+
+        for term in ("entity_id", "unique_id"):
+            assert re.search(rf"(?<![\w-]){term}(?![\w-])", text), (
+                f"{name} never mentions {term!r}: the section must name both "
+                "identifiers (entity_id is derived from the name and mutable, "
+                "unique_id is immutable)"
+            )

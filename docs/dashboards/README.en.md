@@ -93,10 +93,15 @@ These resources are not needed for the templates but can improve convenience:
 
 ## 4. Placeholder and binding concept
 
-**`entity_id` is NOT stable.** Home Assistant derives the `entity_id` from
-the *friendly name* — and that contains the workspace name and possibly the
-system language. If the name or language changes, the `entity_id` changes.
-Automations and dashboards must therefore not rely on the `entity_id`.
+**The `entity_id` is created once, at first registration.** Home Assistant derives it at
+that moment from the then-localized name plus the device name and stores it in the entity
+registry. Afterwards HA does **not** change it automatically — neither on a later rename
+of the display name nor on a language switch. It can therefore differ between
+installations (system language, device name, history). The stable identity is the
+`unique_id`; manually renaming the `entity_id` is possible but breaks automations and
+dashboards. See
+[Entity names and entity IDs](../../README.md#entity-names-and-entity-ids) in the main
+README.
 
 **What is stable is the `unique_id` suffix.** Every entity carries a `unique_id`
 following the pattern `{entry_id}_{workspace_key}_{window}{suffix}`

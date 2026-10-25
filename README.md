@@ -240,6 +240,28 @@ auto-refresh **ON**, catalog interval **60 min**); the former workspace model co
 (`auto_update_models`, `models_refresh_minutes`) are removed without replacement. Home
 Assistant **2026.8.0** or newer is required.
 
+## Entity names and entity IDs
+
+Canonical entity names, translation keys and `unique_id`s are English; Home Assistant
+localizes the display names at runtime. The `entity_id` itself is created **once**, at
+first registration — from the name localized at that moment plus the device name. After
+that Home Assistant does **not** change it automatically: neither when the display name
+changes nor when the system language changes.
+
+`entity_id`s can therefore differ between installations (system language, device name,
+history). The IDs shown in this README are examples — use the IDs from your own
+installation and do not rely on example slugs in automations. The stable identity is the
+`unique_id`. Manually renaming an `entity_id` is possible in the entity settings, but it
+breaks automations and dashboards and is not an automatic action of this integration.
+
+The account device is deliberately named "Go Gauge Konto"; that is why account entity IDs
+carry the `go_gauge_konto` prefix (e.g. `binary_sensor.go_gauge_konto_api_erreichbar`).
+Workspace device names are user-defined, so their prefixes vary.
+
+Background: [the entity registry](https://developers.home-assistant.io/docs/entity_registry_index/)
+in the Home Assistant developer docs — how the registry stores the `entity_id` and why the
+`unique_id` must never change.
+
 ## Example automation
 
 ```yaml
