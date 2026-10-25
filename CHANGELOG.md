@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.0.3] — 2026-10-25
+
+### 🔧 CI / Dependencies
+
+- Bump `actions/checkout` from 4 to 7
+- Bump `actions/setup-python` from 5 to 7
+
+No functional changes.
+
 ## [2.0.2] — 2026-10-25
 
 ### 📝 Documentation

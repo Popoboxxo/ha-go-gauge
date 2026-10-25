@@ -12,10 +12,10 @@ Phase A - config-entry version contract:
   that version as its migration target.
 
 Phase C - the 2.0.x release contract (plan ``docs/PLAN-account-entry-2.0.0.md``
-§8.4, §9.1, §11.1 R1, §11.3 V2; current release ``2.0.2``):
+§8.4, §9.1, §11.1 R1, §11.3 V2; current release ``2.0.3``):
 
 - release metadata: ``manifest.version`` is the bare SemVer of the current
-  release (``2.0.2``) and the declared minimum HA version ``2026.8.0`` is
+  release (``2.0.3``) and the declared minimum HA version ``2026.8.0`` is
   identical in ``hacs.json``, the README badge and
   ``docs/dashboards/README.md`` (§9.1),
 - the deprecated device-transfer kwargs ``add_config_entry_id=`` /
@@ -27,7 +27,7 @@ Phase C - the 2.0.x release contract (plan ``docs/PLAN-account-entry-2.0.0.md``
   ``async_config_entry_first_refresh`` call (a catalog fetch failure must never
   be able to fail the account setup, §6.3),
 - the release rule itself: ``scripts/check_version_sync.py`` accepts the tag of
-  the current release (``v2.0.2``) against the real manifest and rejects a stale
+  the current release (``v2.0.3``) against the real manifest and rejects a stale
   tag (HACS rule).
 
 Both source scans parse the module with :mod:`ast` instead of grepping text:
@@ -133,15 +133,15 @@ def test_entry_kind_constants_are_consistent() -> None:
 # --- 2.0.x release metadata (plan §9.1) ------------------------------------
 
 
-def test_manifest_version_is_2_0_2() -> None:
-    """[PLAN2-M4] The released manifest version is the bare SemVer ``2.0.2``.
+def test_manifest_version_is_2_0_3() -> None:
+    """[PLAN2-M4] The released manifest version is the bare SemVer ``2.0.3``.
 
-    The tag counterpart (``v2.0.2``) is covered by
+    The tag counterpart (``v2.0.3``) is covered by
     :func:`test_version_sync_tag_matches_manifest`; no ``v`` prefix may leak
     into ``manifest.version`` (HACS/hassfest reject it).
     """
     manifest = json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))
-    assert manifest["version"] == "2.0.2"
+    assert manifest["version"] == "2.0.3"
 
 
 def test_declared_min_version_consistent() -> None:
@@ -307,7 +307,7 @@ def test_account_coordinator_has_no_config_entry() -> None:
 
 
 def test_version_sync_tag_matches_manifest(monkeypatch) -> None:
-    """[PLAN2-M4] Real manifest + tag ``v2.0.2`` pass ``check_version_sync``.
+    """[PLAN2-M4] Real manifest + tag ``v2.0.3`` pass ``check_version_sync``.
 
     Forward test of the release rule (plan §8.4/§8.5) against the *real*
     ``custom_components/go_gauge/manifest.json``: the release tag must match
@@ -325,7 +325,7 @@ def test_version_sync_tag_matches_manifest(monkeypatch) -> None:
     monkeypatch.setattr(version_sync, "MANIFEST_FILE", MANIFEST_FILE)
     monkeypatch.setenv("EVENT_NAME", "release")
 
-    monkeypatch.setenv("TAG_NAME", "v2.0.2")
+    monkeypatch.setenv("TAG_NAME", "v2.0.3")
     assert version_sync.main() == 0
 
     # Counter-check: a stale tag must fail, otherwise the guard proves nothing.
