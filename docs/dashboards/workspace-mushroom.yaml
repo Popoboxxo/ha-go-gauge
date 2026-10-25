@@ -17,6 +17,10 @@
 #           Entitaet zunaechst ueber die entity_id (bzw. Suche) auf; fehlt die
 #           Entitaet, zeigt die Karte "Entity not available". Dann die echte
 #           entity_id eintragen (unique_id-Suffix-Match).
+#           Die Integration verlangt ab v2.0.0 Home Assistant 2026.8.0.
+# Konto   : Der Refresh-Chip oben laedt NUR die Nutzung. Katalog,
+#           Erreichbarkeit und die globalen Konto-Settings liegen am
+#           Konto-Geraet; der Konto-Refresh laedt NUR den Katalog.
 # =============================================================================
 title: Go Gauge (Mushroom)
 views:
@@ -183,7 +187,7 @@ views:
             name: Rate-limited
             icon: mdi:block-helper
 
-      # --- Steuerung ---------------------------------------------------------
+      # --- Steuerung (Workspace) ---------------------------------------------
       - type: custom:mushroom-title-card
         title: Steuerung
       - type: grid
@@ -208,12 +212,6 @@ views:
             name: Nutzung Refresh (Min)
             icon: mdi:timer-outline
             display_mode: buttons
-          # Label "Modelle Refresh (Min)" -> Entity "Models Refresh (min)"
-          - type: custom:mushroom-number-card
-            entity: number.go_gauge_models_refresh_min_WS
-            name: Modelle Refresh (Min)
-            icon: mdi:timer-outline
-            display_mode: buttons
           # Label "Nutzung Auto-Update" -> Entity "Auto Update Usage"
           - type: custom:mushroom-entity-card
             entity: switch.go_gauge_WS_auto_update_usage
@@ -221,18 +219,12 @@ views:
             icon: mdi:autorenew
             tap_action:
               action: toggle
-          # Label "Modelle Auto-Update" -> Entity "Auto Update Models"
-          - type: custom:mushroom-entity-card
-            entity: switch.go_gauge_WS_auto_update_models
-            name: Modelle Auto-Update
-            icon: mdi:autorenew
-            tap_action:
-              action: toggle
-          # Friendly Name ohne Workspace-Name: bei mehreren Workspaces wird die
-          # entity_id zu button.go_gauge_refresh_2 (siehe README, Gotcha).
+          # Refresh (Usage): laedt NUR die Nutzung. Friendly Name ohne
+          # Workspace-Name: bei mehreren Workspaces wird die entity_id zu
+          # button.go_gauge_refresh_2 (siehe README, Gotcha).
           - type: custom:mushroom-entity-card
             entity: button.go_gauge_refresh
-            name: Aktualisieren
+            name: Refresh (Usage)
             icon: mdi:refresh
             tap_action:
               action: call-service
@@ -240,7 +232,7 @@ views:
               target:
                 entity_id: button.go_gauge_refresh
 
-      # --- Modell-Katalog / Konto -------------------------------------------
+      # --- Modell-Katalog / Konto (Konto-Device, genau einmal) ---------------
       - type: custom:mushroom-title-card
         title: Modell-Katalog / Konto
       - type: custom:mushroom-template-card
@@ -276,3 +268,27 @@ views:
             entity: binary_sensor.go_gauge_api_reachable
             name: API erreichbar
             icon: mdi:cloud-check-outline
+          # Globale Konto-Settings (Konto-Entry, gelten fuer alle Workspaces).
+          - type: custom:mushroom-entity-card
+            entity: switch.go_gauge_konto_auto_update_models
+            name: Katalog Auto-Update (global)
+            icon: mdi:autorenew
+            tap_action:
+              action: toggle
+          - type: custom:mushroom-number-card
+            entity: number.go_gauge_konto_models_refresh_min
+            name: Katalog Refresh (Min, global)
+            icon: mdi:timer-outline
+            display_mode: buttons
+          # Konto-Refresh: laedt NUR den Katalog (unique_id account_refresh).
+          # Konto-entity_ids sind illustrativ; verbindlich ist der
+          # unique_id-Suffix aus der Entity-Registry.
+          - type: custom:mushroom-entity-card
+            entity: button.go_gauge_konto_refresh
+            name: Katalog aktualisieren
+            icon: mdi:refresh
+            tap_action:
+              action: call-service
+              service: button.press
+              target:
+                entity_id: button.go_gauge_konto_refresh

@@ -7,11 +7,12 @@
 [tool.ruff]
 line-length = 100
 # Align with the minimum supported runtime (hacs.json `homeassistant` =
-# "2024.6.0", Python 3.12) so lint does not flag/miss 3.13-only constructs.
+# "2026.8.0", Python 3.12) so lint does not flag/miss 3.13-only constructs.
 target-version = "py312"
-# `.agent-meta` is a git submodule with its own lifecycle (see AGENTS.md,
-# "Submodule-Schutzkonzept") and must never be linted or edited from here.
-extend-exclude = [".agent-meta"]
+# `.agent-meta` and `external/` are git submodules with their own lifecycle (see
+# AGENTS.md, "Submodule-Schutzkonzept") and must never be linted or edited from
+# here.
+extend-exclude = [".agent-meta", "external"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
@@ -27,7 +28,7 @@ select = ["E", "F", "I", "W"]
 
 [tool.mypy]
 # Align with the minimum supported runtime (hacs.json `homeassistant` =
-# "2024.6.0", Python 3.12).
+# "2026.8.0", Python 3.12).
 python_version = "3.12"
 # Check the integration only - tests rely on deliberately loose HA fakes.
 files = ["custom_components/go_gauge"]

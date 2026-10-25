@@ -1,28 +1,45 @@
-"""Shared entity base + persistence helper for Go Gauge."""
+"""Shared entity bases + persistence helpers for Go Gauge.
+
+Two separate bases since 2.0.0 (plan §2.8):
+
+* :class:`GoGaugeEntityBase` - workspace entities (usage windows). The device is
+  the workspace's own device, identified by the config entry id.
+* :class:`GoGaugeAccountEntityBase` - account entities (model catalog, API
+  reachability, account settings). The device is the single
+  ``(DOMAIN, "account")`` device and is shared by every account entry.
+"""
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER, MODEL
+from .const import (
+    ACCOUNT_DEVICE_IDENTIFIER,
+    DOMAIN,
+    ENTITY_NAME_ACCOUNT,
+    MANUFACTURER,
+    MODEL,
+)
 from .coordinator import GoGaugeCoordinator
+
+if TYPE_CHECKING:  # no runtime import: entity.py must stay loadable on its own
+    from .account import AccountCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class GoGaugeEntityBase(CoordinatorEntity):
-    """Common device-info wiring + entry reference for all Go Gauge entities.
+    """Common device-info wiring + entry reference for all workspace entities.
 
     ``has_entity_name`` is enabled globally: entity display names are resolved
     from ``translation_key`` lookups (strings.json / translations/*.json) and
-    HA prefixes the device name automatically (e.g. "Go Gauge <workspace>" for
-    workspace entities, "Go Gauge Konto" for workspace-independent ones). No
-    entity sets ``_attr_name`` anymore - a set ``_attr_name`` would short-circuit
-    the translation lookup.
+    HA prefixes the device name automatically (e.g. "Go Gauge <workspace>").
+    No entity sets ``_attr_name`` anymore - a set ``_attr_name`` would
+    short-circuit the translation lookup.
     """
 
     _attr_has_entity_name = True
@@ -49,23 +66,42 @@ class GoGaugeEntityBase(CoordinatorEntity):
         return None
 
 
-class GoGaugeAccountEntityBase(GoGaugeEntityBase):
-    """Workspace-independent entities (model catalog, API reachability).
+class GoGaugeAccountEntityBase(CoordinatorEntity):
+    """Base for the workspace-independent account entities (2.0.0).
 
-    Own device ('Go Gauge Konto'), identified by a fixed key instead of the
-    catalog-owner's entry_id - so it stays visually separate from any one
-    workspace's device even though the catalog owner's config entry is what
-    creates it (see __init__.py is_catalog_owner).
+    Deliberately its OWN base instead of a ``GoGaugeEntityBase`` subclass: the
+    account entities belong to the account ConfigEntry, use the fixed account
+    device and never look up a workspace. Sharing the workspace base would drag
+    the workspace device_info (entry_id identifier) and the ``_ws`` helper into
+    entities that have neither (plan §2.8).
     """
 
-    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry)
+    _attr_has_entity_name = True
+
+    coordinator: AccountCoordinator
+
+    def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, "account")},
-            "name": "Go Gauge Konto",
+            "identifiers": {(DOMAIN, ACCOUNT_DEVICE_IDENTIFIER)},
+            "name": ENTITY_NAME_ACCOUNT,
             "manufacturer": MANUFACTURER,
             "model": MODEL,
         }
+
+    @property
+    def available(self) -> bool:
+        """Stay visible even without data.
+
+        HA-conform: ``available = True`` plus a ``None`` state means "unknown",
+        which is exactly what an account entity without (fresh) evidence should
+        show. Inheriting ``CoordinatorEntity.available`` would render the entity
+        ``unavailable`` and drop its state/attributes - including the
+        reachability reason this integration exists to surface. ``None`` is the
+        unknown state, never a fake value.
+        """
+        return True
 
 
 def persist_options(hass: HomeAssistant, entry: ConfigEntry,
@@ -89,3 +125,18 @@ def persist_options(hass: HomeAssistant, entry: ConfigEntry,
     if not changed:
         coordinator._skip_reload = False
     return changed
+
+
+def persist_account_options(
+    hass: HomeAssistant, entry: ConfigEntry, **changes: Any
+) -> bool:
+    """Persist account options - WITHOUT a reload flag.
+
+    The account entry has NO update listener on purpose (plan §6.4): its
+    runtime entities apply their setters live via the coordinator, and
+    ``hass.config_entries.async_update_entry`` therefore must not trigger a
+    reload. That is why there is no ``_skip_reload`` counterpart here - the flag
+    only exists for the workspace coordinator whose entry DOES have a listener.
+    """
+    options = {**entry.options, **changes}
+    return bool(hass.config_entries.async_update_entry(entry, options=options))

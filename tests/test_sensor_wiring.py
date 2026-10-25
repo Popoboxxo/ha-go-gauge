@@ -59,6 +59,9 @@ def _load(name, path):
 
 
 const = _load("go_gauge.const", str(BASE / "const.py"))
+_load("go_gauge.api", str(BASE / "api.py"))
+_load("go_gauge.catalog", str(BASE / "catalog.py"))
+_load("go_gauge.account_logic", str(BASE / "account_logic.py"))
 _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 _load("go_gauge.entity", str(BASE / "entity.py"))
 sensor = _load("go_gauge.sensor", str(BASE / "sensor.py"))
@@ -74,6 +77,7 @@ class _FakeCoordinator:
 
 class _FakeEntry:
     entry_id = "test_entry"
+    data: dict = {}  # no entry_kind -> conf_entry_kind() defaults to workspace
 
 
 class _FakeHass:

@@ -18,9 +18,12 @@
 # (v7-Migration, Quelle: const.py `ENTITY_ID_MIGRATION`).
 #
 # Pflege: Bei jeder Aenderung an custom_components/go_gauge/* nachziehen.
-# Abgeglichen mit: v1.5.0 (englische entity_id-Slugs, v7-Migration) -
+# Abgeglichen mit: v2.0.0 (Konto-Entry-Architektur: eigene, automatisch
+# angelegte Konto-Entry `unique_id = go_gauge_account` besitzt die Konto-
+# Entities und -Settings; Workspace-Entries sind reine Usage-Instanzen) -
 # sensor.py, binary_sensor.py, number.py, switch.py, button.py, entity.py,
-# const.py (`ENTITY_ID_MIGRATION` / `ENTITY_NAME_*`).
+# account.py, account_logic.py, const.py. Historische v7-Slug-Migration
+# (ENTITY_ID_MIGRATION) bleibt gueltig.
 
 version: 1
 domain: go_gauge
@@ -43,7 +46,12 @@ devices:
   account:
     name_pattern: "Go Gauge Konto"
     identifiers: "go_gauge / account"
-    catalog_owner_only: true
+    entry: "account"
+    owner_note: >-
+      Gehoert der genau einmal vorhandenen, automatisch angelegten Konto-Entry
+      (unique_id "go_gauge_account", Titel "Go Gauge Konto"). Nie manuell
+      anlegen; nach dem Loeschen wird sie beim naechsten Workspace-Setup bzw.
+      HA-Start neu erzeugt.
 entities:
   # --- pro Fenster (window_specific: true) -----------------------------------
   - logical: usage_percent
@@ -56,7 +64,7 @@ entities:
     unit: "%"
     state_class: measurement
     attributes: [workspace_key, window, status, note, resets_at_iso]
-    source: "sensor.py:108-109"
+    source: "sensor.py:105-165"
   - logical: reset
     platform: sensor
     device: workspace
@@ -65,7 +73,7 @@ entities:
     name_pattern: "Go Gauge {WS} {window_label} Reset"
     window_specific: true
     device_class: timestamp
-    source: "sensor.py:160-161"
+    source: "sensor.py:168-190"
   - logical: forecast
     platform: sensor
     device: workspace
@@ -76,7 +84,7 @@ entities:
     unit: "%"
     state_class: measurement
     note: "Kann > 100 sein (bewusst; zeigt Budgetueberschreitung am Fensterende)."
-    source: "sensor.py:193-194"
+    source: "sensor.py:193-219"
   - logical: pace
     platform: sensor
     device: workspace
@@ -86,7 +94,7 @@ entities:
     window_specific: true
     attributes: [forecast_percent, green_below, red_above]
     note: "State ist ein englischer String: green | yellow | red."
-    source: "sensor.py:215-216"
+    source: "sensor.py:222-259"
   - logical: remaining
     platform: sensor
     device: workspace
@@ -96,7 +104,7 @@ entities:
     window_specific: true
     unit: "%"
     state_class: measurement
-    source: "sensor.py:255-256"
+    source: "sensor.py:262-284"
   - logical: time_to_reset
     platform: sensor
     device: workspace
@@ -106,7 +114,7 @@ entities:
     window_specific: true
     device_class: duration
     unit: "h"
-    source: "sensor.py:275-276"
+    source: "sensor.py:287-306"
   - logical: burn_rate
     platform: sensor
     device: workspace
@@ -116,7 +124,7 @@ entities:
     window_specific: true
     unit: "%/h"
     state_class: measurement
-    source: "sensor.py:296-297"
+    source: "sensor.py:309-330"
   - logical: rate_limited
     platform: binary_sensor
     device: workspace
@@ -125,7 +133,7 @@ entities:
     name_pattern: "Go Gauge {WS} {window_label} rate-limited"
     window_specific: true
     device_class: problem
-    source: "binary_sensor.py:53-55"
+    source: "binary_sensor.py:63-96"
 
   # --- Workspace-Ebene (window_specific: false) ------------------------------
   - logical: subscription_active
@@ -137,7 +145,7 @@ entities:
     window_specific: false
     device_class: connectivity
     attributes: [workspace_key, note]
-    source: "binary_sensor.py:90-91"
+    source: "binary_sensor.py:99-136"
   - logical: warn_percent
     platform: number
     device: workspace
@@ -150,7 +158,7 @@ entities:
     max: 100
     default: 80
     note: "Gruen/Gelb-Grenze der Pace-Ampel."
-    source: "number.py:24-26,66-69"
+    source: "number.py:102-122"
   - logical: pace_red_percent
     platform: number
     device: workspace
@@ -163,7 +171,7 @@ entities:
     max: 300
     default: 100
     note: "Gelb/Rot-Grenze der Pace-Ampel."
-    source: "number.py:87-91"
+    source: "number.py:125-145"
   - logical: usage_refresh_minutes
     platform: number
     device: workspace
@@ -175,20 +183,7 @@ entities:
     min: 1
     max: 1440
     default: 10
-    source: "number.py:109-113"
-  - logical: models_refresh_minutes
-    platform: number
-    device: workspace
-    unique_id_suffix: "_models_refresh_minutes"
-    unique_id_template: "{entry_id}_models_refresh_minutes"
-    name_pattern: "Go Gauge Models Refresh (min) \u00b7 {WS}"
-    window_specific: false
-    unit: "min"
-    min: 1
-    max: 1440
-    default: 60
-    note: "Existiert pro Workspace-Instanz (nicht nur Catalog Owner); steuert das Modell-Refresh-Intervall."
-    source: "number.py:132-136"
+    source: "number.py:148-169"
   - logical: auto_update_usage
     platform: switch
     device: workspace
@@ -196,16 +191,7 @@ entities:
     unique_id_template: "{entry_id}_auto_update_usage"
     name_pattern: "Go Gauge {WS} Auto Update Usage"
     window_specific: false
-    source: "switch.py:38-40"
-  - logical: auto_update_models
-    platform: switch
-    device: workspace
-    unique_id_suffix: "_auto_update_models"
-    unique_id_template: "{entry_id}_auto_update_models"
-    name_pattern: "Go Gauge {WS} Auto Update Models"
-    window_specific: false
-    note: "Existiert pro Workspace-Instanz (nicht nur Catalog Owner)."
-    source: "switch.py:66-68"
+    source: "switch.py:56-83"
   - logical: refresh
     platform: button
     device: workspace
@@ -213,59 +199,105 @@ entities:
     unique_id_template: "{entry_id}_refresh"
     name_pattern: "Go Gauge Refresh"
     window_specific: false
-    note: "Friendly Name OHNE Workspace-Name -> entity_id kollidiert bei mehreren Workspaces (Suffix _2)."
-    source: "button.py:32,36"
+    note: "Laedt NUR Usage (setzt last_usage_fetch zurueck); der Katalog-Refresh ist der Konto-Button account_refresh. Beide Buttons teilen den Translation-Key `refresh`."
+    source: "button.py:49-68"
 
-  # --- Konto-Ebene (workspace-unabhaengig, nur Catalog Owner) ----------------
+  # --- Konto-Ebene (workspace-unabhaengig, Konto-Entry) ----------------------
+  # Alle Eintraege gehoeren der automatisch angelegten Konto-Entry
+  # (`account_entry: true`) und dem Device (DOMAIN, "account"). Bestehende
+  # Installationen behalten ihre entity_id; verbindlich ist die unique_id.
   - logical: model_catalog
     platform: sensor
     device: account
-    unique_id_suffix: "_model_catalog"
-    unique_id_template: "{entry_id}_model_catalog"
-    name_pattern: "Go Gauge Models"
+    unique_id_suffix: "account_model_catalog"
+    unique_id_template: "account_model_catalog"
+    name_pattern: "Go Gauge Konto Models"
     window_specific: false
     state_class: measurement
-    catalog_owner_only: true
-    attributes: [catalog_json, ranking_by_cost, free_models, cheapest_model, cheapest_overall, count, live_count, models_updated_at]
-    note: "State = Anzahl. Es gibt KEINE Einzel-Entities pro Modell."
-    source: "sensor.py:321-322"
+    account_entry: true
+    attributes: [catalog_json, ranking_by_cost, free_models, cheapest_model, cheapest_overall, count, live_count, models_updated_at, account_auto_update_models, account_fetch_interval_minutes, account_models_refresh_minutes, account_last_models_outcome]
+    note: "State = Anzahl. Es gibt KEINE Einzel-Entities pro Modell. Die vier account_*-Attribute spiegeln die globalen Konto-Settings (Basis- vs. effektives Intervall inkl. Backoff)."
+    source: "sensor.py:333-420"
   - logical: models_live_count
     platform: sensor
     device: account
-    unique_id_suffix: "_models_live_count"
-    unique_id_template: "{entry_id}_models_live_count"
-    name_pattern: "Go Gauge Live Models"
+    unique_id_suffix: "account_models_live_count"
+    unique_id_template: "account_models_live_count"
+    name_pattern: "Go Gauge Konto Live Models"
     window_specific: false
     state_class: measurement
-    catalog_owner_only: true
-    source: "sensor.py:385-386"
+    account_entry: true
+    source: "sensor.py:423-437"
   - logical: cheapest_model
     platform: sensor
     device: account
-    unique_id_suffix: "_cheapest_model"
-    unique_id_template: "{entry_id}_cheapest_model"
-    name_pattern: "Go Gauge Cheapest Model"
+    unique_id_suffix: "account_cheapest_model"
+    unique_id_template: "account_cheapest_model"
+    name_pattern: "Go Gauge Konto Cheapest Model"
     window_specific: false
-    catalog_owner_only: true
+    account_entry: true
     attributes: [cheapest_overall, ratio_usd_per_1m]
-    source: "sensor.py:401-402"
+    source: "sensor.py:440-460"
   - logical: free_models
     platform: sensor
     device: account
-    unique_id_suffix: "_free_models"
-    unique_id_template: "{entry_id}_free_models"
-    name_pattern: "Go Gauge Free Models"
+    unique_id_suffix: "account_free_models"
+    unique_id_template: "account_free_models"
+    name_pattern: "Go Gauge Konto Free Models"
     window_specific: false
-    catalog_owner_only: true
+    account_entry: true
     note: "State = kommagetrennte Liste der kostenlosen Modelle."
-    source: "sensor.py:422-423"
+    source: "sensor.py:463-474"
   - logical: api_reachable
     platform: binary_sensor
     device: account
-    unique_id_suffix: "_api_reachable"
-    unique_id_template: "{entry_id}_api_reachable"
-    name_pattern: "Go Gauge API Reachable"
+    unique_id_suffix: "account_api_reachable"
+    unique_id_template: "account_api_reachable"
+    name_pattern: "Go Gauge Konto API Reachable"
     window_specific: false
     device_class: connectivity
-    catalog_owner_only: true
-    source: "binary_sensor.py:117-118"
+    account_entry: true
+    attributes: [reachability_reason, evidence, models_ttl_s, usage_ttl_s, checked_at]
+    note: >-
+      Evidenz-/TTL-basiert: ON bei mindestens einem frischen Erfolg (Katalog-
+      oder Usage-Fetch); unknown, wenn die API antwortet, aber keinen Erfolg
+      belegt (401/kein Abo) oder keine frische Evidenz vorliegt; OFF nur bei
+      ausschliesslich frischen Fehlschlaegen. TTL: Modelle 2x Konto-Basis-
+      intervall (Fallback 120 min bei Auto-Refresh aus), Usage 3x Workspace-
+      Intervall. Ein 5-Minuten-Publish-Tick schreibt den Zustand neu, ohne HTTP.
+    source: "binary_sensor.py:139-184"
+  - logical: account_refresh
+    platform: button
+    device: account
+    unique_id_suffix: "account_refresh"
+    unique_id_template: "account_refresh"
+    name_pattern: "Refresh"
+    window_specific: false
+    account_entry: true
+    note: "Laedt NUR den Modell-Katalog (AccountCoordinator.async_fetch_now); loest keinen Usage-Fetch aus. Translation-Key `refresh` wie beim Workspace-Button - unterschieden nur ueber das Device (Go Gauge Konto vs. Go Gauge <Workspace>); die entity_id ist device-praefixiert."
+    source: "button.py:71-83"
+  - logical: account_auto_update_models
+    platform: switch
+    device: account
+    unique_id_suffix: "account_auto_update_models"
+    unique_id_template: "account_auto_update_models"
+    name_pattern: "Go Gauge Konto Auto Update Models"
+    window_specific: false
+    account_entry: true
+    default: true
+    note: "Globale Konto-Einstellung (ersetzt die frueheren Workspace-Modell-Regler); wirkt live ohne Reload."
+    source: "switch.py:85-116"
+  - logical: account_models_refresh_minutes
+    platform: number
+    device: account
+    unique_id_suffix: "account_models_refresh_minutes"
+    unique_id_template: "account_models_refresh_minutes"
+    name_pattern: "Go Gauge Konto Models Refresh (min)"
+    window_specific: false
+    account_entry: true
+    unit: "min"
+    min: 1
+    max: 1440
+    default: 60
+    note: "Basisintervall des Katalog-Fetch; das effektive Intervall kann bei 403/Netzfehler per Backoff bis 60 min wachsen. Value = Basis, nicht Backoff."
+    source: "number.py:172-201"

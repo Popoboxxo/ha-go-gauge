@@ -4,14 +4,15 @@
 # Zweck   : Mehrere Go-Gauge-Workspaces nebeneinander auf einem Dashboard.
 #           Pro Workspace wird das decluttering-Template `go_gauge_workspace`
 #           einmal instanziiert; das responsive Grid kommt von `layout-card`.
-#           Je Kachel: Abo-Status, Refresh-Button, drei KOMPAKTE Fenster-Karten
-#           (5h rolling / Weekly / Monthly) mit Nutzung, Prognose, Pace,
-#           Restbudget, Reset, Restzeit und Burn-Rate. Das Rate-Limit wird
+#           Je Kachel: Abo-Status, Refresh-Button (NUR Usage), drei KOMPAKTE
+#           Fenster-Karten (5h rolling / Weekly / Monthly) mit Nutzung, Prognose,
+#           Pace, Restbudget, Reset, Restzeit und Burn-Rate. Das Rate-Limit wird
 #           ueber Icon/Farbe plus Text-Hinweis signalisiert (keine separate
 #           Rate-Limit-Chip mehr), dazu die Steuerungs-Sektion (Warning
-#           Threshold, Pace Red Limit, Auto-Update-Schalter).
+#           Threshold, Pace Red Limit, Auto-Update Usage).
 #           Oberhalb des Grids: die konto-weite API-Reachability genau einmal.
-#           Unterhalb des Grids: das Konto-/Katalog-Panel (Catalog Owner only).
+#           Unterhalb des Grids: das Konto-/Katalog-Panel der Konto-Entry
+#           (Katalog-Sensoren, globale Konto-Settings, Konto-Refresh).
 #
 # Custom  : benoetigte Frontend-Ressourcen (via HACS installieren, danach Home
 #           Assistant neu laden):
@@ -25,7 +26,7 @@
 #           - vertical-stack-in-card  -> custom:vertical-stack-in-card
 #                                        (Kachel-Container)
 #
-#           HA-Mindestversion: 2024.7 (Badges ab 2024.8). decluttering-card-plus
+#           HA-Mindestversion: 2026.8.0 (Badges ab 2024.8). decluttering-card-plus
 #           registriert optional auch den Alt-Typ `custom:decluttering-card`;
 #           neue Dashboards nutzen aber immer `custom:decluttering-card-plus`.
 #
@@ -51,7 +52,7 @@ decluttering_templates:
   #
   # [[slug_a]]      entity_id-Praefix fuer Entities mit TRAILING Fragment:
   #                 usage / reset / rate_limited / subscription_active /
-  #                 auto_update_usage / auto_update_models.
+  #                 auto_update_usage.
   #                 Form: <device>_go_gauge_<workspace> (nur das Praefix; das
   #                 Fragment haengt das Template selbst an).
   #
@@ -72,10 +73,14 @@ decluttering_templates:
   #                 Workspace-Slug variiert:
   #                 number.<device>_go_gauge_pace_red_limit_<workspace>.
   #
-  # [[refresh_btn]] VOLLE entity_id des Refresh-Buttons (button.<...>_refresh).
-  #                 Der Button ist workspace-unabhaengig benannt und kollidiert
-  #                 bei mehreren Workspaces -> reale entity_id aus der Registry
-  #                 holen (unique_id-Suffix _refresh).
+  # [[refresh_btn]] VOLLE entity_id des WORKSPACE-Refresh-Buttons
+  #                 (button.<...>_refresh); laedt NUR die Nutzung. Der Button ist
+  #                 workspace-unabhaengig benannt und kollidiert bei mehreren
+  #                 Workspaces (Suffix _2/_3, ...) -> reale entity_id aus der
+  #                 Registry holen (unique_id-Suffix _refresh). Der Konto-Refresh
+  #                 ist ein separater, device-praefixierter Button
+  #                 (button.go_gauge_konto_refresh, unique_id account_refresh) und
+  #                 von dieser Kollision nicht betroffen.
   # ---------------------------------------------------------------------------
   go_gauge_workspace:
     default:
@@ -83,10 +88,10 @@ decluttering_templates:
     card:
       type: custom:vertical-stack-in-card
       cards:
-        # --- Header: Abo + Refresh -------------------------------------------
+        # --- Header: Abo + Refresh (Usage) -----------------------------------
         # API-Reachability ist NICHT Teil der Kachel: binary_sensor.
         # go_gauge_api_reachable ist konto-weit und existiert genau einmal
-        # (Catalog Owner) -> globale Kopfzeile ueber dem Grid.
+        # (Konto-Entry) -> globale Kopfzeile ueber dem Grid.
         - type: custom:mushroom-chips-card
           alignment: center
           chips:
@@ -96,6 +101,8 @@ decluttering_templates:
               entity: binary_sensor.[[slug_a]]_subscription_active
               icon: mdi:shield-check-outline
               content_info: none
+            # Refresh (Usage): laedt NUR die Nutzung. Katalog-Refresh laeuft
+            # ueber den Konto-Button im Konto-Panel unterhalb des Grids.
             - type: action
               icon: mdi:refresh
               tap_action:
@@ -259,13 +266,8 @@ decluttering_templates:
               icon: mdi:autorenew
               tap_action:
                 action: toggle
-            # Label "Auto Modelle" -> Entity "Auto Update Models"
-            - type: custom:mushroom-entity-card
-              entity: switch.[[slug_a]]_auto_update_models
-              name: Auto Modelle
-              icon: mdi:autorenew
-              tap_action:
-                action: toggle
+            # Modell-Katalog-Settings sind global (Konto-Entry) und stehen im
+            # Konto-Panel unterhalb des Grids; die Kachel hat sie nicht mehr.
 
 title: Go Gauge Matrix
 views:
@@ -276,7 +278,7 @@ views:
     cards:
       # --- Globale Kopfzeile: API-Reachability (Konto-Ebene) ------------------
       # binary_sensor.go_gauge_api_reachable ist KONTO-WEIT und existiert genau
-      # einmal (Catalog Owner) - deshalb global ueber dem Grid statt pro Kachel.
+      # einmal (Konto-Entry) - deshalb global ueber dem Grid statt pro Kachel.
       - type: custom:mushroom-chips-card
         alignment: center
         chips:
@@ -309,21 +311,26 @@ views:
               - ampel_id: "number.software_go_gauge_app_go_gauge_pace_red_limit_app"
               - refresh_btn: "button.go_gauge_ha_go_gauge_refresh_3"
 
-      # --- Modell-Katalog / Konto (Catalog Owner only / genau einmal) ---------
-      # Konto-weites Panel unterhalb des Grids; die Account-Entities existieren
-      # genau einmal (Catalog Owner), nicht pro Workspace.
+      # --- Modell-Katalog / Konto (Konto-Entry / genau einmal) ---------------
+      # Konto-weites Panel unterhalb des Grids; die Account-Entities gehoeren
+      # der automatisch angelegten Konto-Entry, nicht einem Workspace.
       #
       # HINWEIS: Die hier genannten Account-entity_ids (sensor.go_gauge_models,
       # sensor.go_gauge_live_models, sensor.go_gauge_cheapest_model,
-      # sensor.go_gauge_free_models sowie binary_sensor.go_gauge_api_reachable
-      # in der globalen Kopfzeile) sind ILLUSTRATIV und koennen je nach
-      # Device-Prefix und Systemsprache abweichen. Verbindlich ist der
-      # unique_id-Suffix-Match aus der Entity-Registry:
-      #   _model_catalog      -> sensor.<...>_model_catalog
-      #   _models_live_count  -> sensor.<...>_models_live_count
-      #   _cheapest_model     -> sensor.<...>_cheapest_model
-      #   _free_models        -> sensor.<...>_free_models
-      #   _api_reachable      -> binary_sensor.<...>_api_reachable
+      # sensor.go_gauge_free_models, binary_sensor.go_gauge_api_reachable,
+      # button.go_gauge_konto_refresh, switch.go_gauge_konto_auto_update_models,
+      # number.go_gauge_konto_models_refresh_min) sind ILLUSTRATIV und koennen je
+      # nach Device-Prefix und Systemsprache abweichen; bestehende Installationen
+      # behalten ihre entity_id. Verbindlich ist der unique_id-Match aus der
+      # Entity-Registry:
+      #   account_model_catalog          -> sensor.<...>_model_catalog
+      #   account_models_live_count      -> sensor.<...>_models_live_count
+      #   account_cheapest_model         -> sensor.<...>_cheapest_model
+      #   account_free_models            -> sensor.<...>_free_models
+      #   account_api_reachable          -> binary_sensor.<...>_api_reachable
+      #   account_refresh                -> button.<...>_refresh
+      #   account_auto_update_models     -> switch.<...>_auto_update_models
+      #   account_models_refresh_minutes -> number.<...>_models_refresh_min
       # Siehe docs/dashboards/entity-map.yaml und docs/dashboards/README.md.
       - type: entities
         title: Modell-Katalog / Konto
@@ -336,3 +343,11 @@ views:
             name: Cheapest Model
           - entity: sensor.go_gauge_free_models
             name: Free Models
+          # Globale Konto-Settings (Konto-Entry, gelten fuer alle Workspaces).
+          - entity: switch.go_gauge_konto_auto_update_models
+            name: Katalog Auto-Update (global)
+          - entity: number.go_gauge_konto_models_refresh_min
+            name: Katalog Refresh (Min, global)
+          # Konto-Refresh: laedt NUR den Katalog.
+          - entity: button.go_gauge_konto_refresh
+            name: Katalog aktualisieren

@@ -47,6 +47,8 @@ def _load(name: str, path: str):
 
 
 _load("go_gauge.const", str(BASE / "const.py"))
+_load("go_gauge.api", str(BASE / "api.py"))
+_load("go_gauge.catalog", str(BASE / "catalog.py"))
 coord = _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 
 NOW = datetime(2026, 9, 7, 12, 0, 0, tzinfo=timezone.utc)

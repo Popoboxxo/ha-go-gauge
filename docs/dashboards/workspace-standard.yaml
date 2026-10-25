@@ -12,7 +12,11 @@
 # Slugs   : Kanonische englische entity_id-Slugs seit v1.5.0 (v7-Migration;
 #           Quelle: custom_components/go_gauge/const.py ENTITY_ID_MIGRATION).
 # Hinweis : `statistics-graph`/`history-graph`/`gauge`/`grid` sind ab HA 2024.6
-#           verfuegbar (hacs.json-Mindestversion).
+#           verfuegbar; die Integration selbst verlangt ab v2.0.0 Home
+#           Assistant 2026.8.0.
+# Konto   : Katalog-, Erreichbarkeits- und Konto-Settings-Entities liegen am
+#           Konto-Geraet der automatisch angelegten Konto-Entry. Der
+#           Konto-Refresh-Button laedt NUR den Modell-Katalog.
 # =============================================================================
 title: Go Gauge
 views:
@@ -143,7 +147,7 @@ views:
           - entity: sensor.go_gauge_WS_monthly_usage
             name: Monthly
 
-      # --- Steuerung ---------------------------------------------------------
+      # --- Steuerung (Workspace) ---------------------------------------------
       - type: entities
         title: Steuerung
         entities:
@@ -156,21 +160,17 @@ views:
           # Label "Nutzung Refresh (Minuten)" -> Entity "Usage Refresh (min)"
           - entity: number.go_gauge_usage_refresh_min_WS
             name: Nutzung Refresh (Minuten)
-          # Label "Modelle Refresh (Minuten)" -> Entity "Models Refresh (min)"
-          - entity: number.go_gauge_models_refresh_min_WS
-            name: Modelle Refresh (Minuten)
           # Label "Nutzung Auto-Update" -> Entity "Auto Update Usage"
           - entity: switch.go_gauge_WS_auto_update_usage
             name: Nutzung Auto-Update
-          # Label "Modelle Auto-Update" -> Entity "Auto Update Models"
-          - entity: switch.go_gauge_WS_auto_update_models
-            name: Modelle Auto-Update
+          # Refresh (Usage): laedt NUR die Nutzung. Der Konto-Button unten
+          # laedt dagegen ausschliesslich den Modell-Katalog.
           # Friendly Name ohne Workspace-Name: bei mehreren Workspaces wird die
           # entity_id zu button.go_gauge_refresh_2 (siehe README, Gotcha).
           - entity: button.go_gauge_refresh
-            name: Aktualisieren
+            name: Refresh (Usage)
 
-      # --- Modell-Katalog / Konto -------------------------------------------
+      # --- Modell-Katalog / Konto (Konto-Device, genau einmal) ---------------
       - type: entities
         title: Modell-Katalog / Konto
         entities:
@@ -184,6 +184,17 @@ views:
             name: Free-Modelle
           - entity: binary_sensor.go_gauge_api_reachable
             name: API erreichbar
+          # Globale Konto-Settings (gehoeren der Konto-Entry, gelten fuer alle
+          # Workspaces; die frueheren Workspace-Modell-Regler entfallen).
+          - entity: switch.go_gauge_konto_auto_update_models
+            name: Katalog Auto-Update (global)
+          - entity: number.go_gauge_konto_models_refresh_min
+            name: Katalog Refresh (Minuten, global)
+          # Konto-Refresh: laedt NUR den Katalog (unique_id account_refresh).
+          # Konto-entity_ids sind illustrativ; verbindlich ist der
+          # unique_id-Suffix aus der Entity-Registry.
+          - entity: button.go_gauge_konto_refresh
+            name: Katalog aktualisieren
       - type: markdown
         content: |
           **Live:** {{ states('sensor.go_gauge_live_models') }} von {{ states('sensor.go_gauge_models') }} Modellen · **Günstigstes:** {{ states('sensor.go_gauge_cheapest_model') }} · **Free:** {{ states('sensor.go_gauge_free_models') }}

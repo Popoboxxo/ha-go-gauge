@@ -89,6 +89,9 @@ def _load(name, path):
 
 
 _load("go_gauge.const", str(BASE / "const.py"))
+_load("go_gauge.api", str(BASE / "api.py"))
+_load("go_gauge.catalog", str(BASE / "catalog.py"))
+_load("go_gauge.account_logic", str(BASE / "account_logic.py"))
 _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 _load("go_gauge.entity", str(BASE / "entity.py"))
 binary_sensor = _load("go_gauge.binary_sensor", str(BASE / "binary_sensor.py"))
@@ -99,7 +102,6 @@ class _FakeCoordinator:
     def __init__(self, data, last_update_success: bool = True):
         self.data = data
         self.last_update_success = last_update_success
-        self.is_catalog_owner = True
 
 
 class _FakeEntry:

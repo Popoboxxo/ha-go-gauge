@@ -46,6 +46,8 @@ def _load(name, path):
 
 
 _load("go_gauge.const", str(BASE / "const.py"))
+_load("go_gauge.api", str(BASE / "api.py"))
+_load("go_gauge.catalog", str(BASE / "catalog.py"))
 _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 entity = _load("go_gauge.entity", str(BASE / "entity.py"))
 

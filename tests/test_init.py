@@ -3,9 +3,11 @@
 
 Audit reference: P2-Point-11 (https://github.com/Popoboxxo/ha-go-gauge/docs/AUDIT-2026-09-04.md)
 - Tests for async_setup_entry: entry registration in hass.data, catalog-owner logic
-- Tests for async_migrate_entry: migration path v1/v2 -> v3 -> v4 -> v5 -> v6 -> v7
+- Tests for async_migrate_entry: migration path v1/v2 -> v3 -> v4 -> v5 -> v6 -> v7 -> v8
   (v6 = German->English entity-name migration,
-   v7 = German->English entity_id slug migration)
+   v7 = German->English entity_id slug migration,
+   v8 = explicit entry_kind marker for every workspace entry)
+- Tests for async_setup: the tolerant account-entry bootstrap (2.0.0)
 - Tests for async_unload_entry: cleanup, owner migration on unload
 
 Tests import the REAL __init__ module and verify behavior directly
@@ -13,6 +15,7 @@ against actual code (not inline logic duplicates).
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib.util
 import sys
@@ -62,7 +65,17 @@ def _load(name: str, path: str):
 
 # Load real modules in dependency order
 const = _load("go_gauge.const", str(BASE / "const.py"))
+_load("go_gauge.api", str(BASE / "api.py"))
+_load("go_gauge.catalog", str(BASE / "catalog.py"))
 coordinator = _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
+# Load account.py before __init__: __init__ imports it relatively and the
+# offline `_load` loader only resolves sibling modules already present in
+# sys.modules under their dotted "go_gauge.*" name.
+# account.py binds ConfigEntryState at import time; a later-collected
+# module may have swapped the fake module object, so re-install the stable
+# double right before the import.
+conftest.install_config_entry_state_stub()
+account_module = _load("go_gauge.account", str(BASE / "account.py"))
 init_module = _load("go_gauge.__init__", str(BASE / "__init__.py"))
 
 
@@ -85,6 +98,17 @@ def _stub_registry_migrations():
         yield
 
 
+def test_platforms_derive_from_account_platforms() -> None:
+    """[REVIEW-m8] One source: both entry kinds use the same platform set.
+
+    ``PLATFORMS`` is only the workspace-facing alias of ``ACCOUNT_PLATFORMS``
+    (const.py); a hand-maintained second list could silently diverge and a
+    missing platform kills the whole integration (one import error per platform).
+    """
+    assert init_module.PLATFORMS == list(const.ACCOUNT_PLATFORMS)
+    assert init_module.PLATFORMS is not const.ACCOUNT_PLATFORMS
+
+
 class TestAsyncMigrateEntryLogic:
     """Tests for async_migrate_entry() version migration logic.
 
@@ -94,14 +118,15 @@ class TestAsyncMigrateEntryLogic:
     v4: Single workspace
     v5: SHA-256 unique_id
     v6: German->English entity-name migration
-    v7: German->English entity_id slug migration (current)
+    v7: German->English entity_id slug migration
+    v8: explicit entry_kind marker (current)
 
     Tests the real async_migrate_entry function from __init__.py.
     """
 
     @pytest.mark.asyncio
-    async def test_migrate_v1_to_v7_extracts_first_token(self):
-        """[AUDIT-P2-11] v1->v7 migration keeps first token from list."""
+    async def test_migrate_v1_to_v8_extracts_first_token(self):
+        """[AUDIT-P2-11] v1->v8 migration keeps first token from list."""
         # Create mock entry for v1
         entry = MagicMock()
         entry.version = 1
@@ -116,13 +141,14 @@ class TestAsyncMigrateEntryLogic:
 
         # Migration should succeed
         assert result is True
-        # Entry version should be updated to 7 (current)
-        assert entry.version == 7
+        # Entry version should be updated to 8 (current)
+        assert entry.version == 8
         # First token should be extracted
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
         updated_data = call_args[1]["data"]
         assert updated_data["token"] == "token-1"
+        assert updated_data["entry_kind"] == "workspace"
         assert "tokens" not in updated_data
         assert "host" not in updated_data
 
@@ -173,8 +199,8 @@ class TestAsyncMigrateEntryLogic:
         assert "tokens" not in updated_data
 
     @pytest.mark.asyncio
-    async def test_migrate_v4_to_v7_preserves_data(self):
-        """[AUDIT-P2-11] v4->v7 migration advances version but preserves data."""
+    async def test_migrate_v4_to_v8_preserves_data(self):
+        """[AUDIT-P2-11] v4->v8 migration advances version but preserves data."""
         original_data = {"token": "current-token", "workspace_name": "My WS"}
         entry = MagicMock()
         entry.version = 4
@@ -187,18 +213,19 @@ class TestAsyncMigrateEntryLogic:
         result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        # Version advances to current (7); entry.data is untouched.
-        assert entry.version == 7
+        # Version advances to current (8); the only data change is the v8
+        # entry_kind marker, everything else is untouched.
+        assert entry.version == 8
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
         updated_data = call_args[1]["data"]
-        assert updated_data == original_data
+        assert updated_data == {**original_data, "entry_kind": "workspace"}
 
     @pytest.mark.asyncio
     async def test_migrate_future_version_rejected(self):
-        """[AUDIT-P2-11] Versions > 7 are rejected (cannot downgrade)."""
+        """[AUDIT-P2-11] Versions > 8 are rejected (cannot downgrade)."""
         entry = MagicMock()
-        entry.version = 8
+        entry.version = 9
         entry.data = {}
         entry.options = {}
 
@@ -231,13 +258,13 @@ class TestAsyncMigrateEntryLogic:
 
 
 class TestUniqueIdHashMigration:
-    """v4->v7 (incl. the v5 step): unique_id plaintext-fragment -> SHA-256 hash.
+    """v4->v8 (incl. the v5 step): unique_id plaintext-fragment -> SHA-256 hash.
 
     Security migration (AUDIT-2026-09-04): the pre-v5 unique_id embedded a
     16-char plaintext token fragment persisted in HA storage. The v5 step
     replaces it with a SHA-256 hash recomputed from the stored token, matching
     exactly what const.token_unique_id (and thus the config flow) produces. A
-    v4 entry therefore ends up at the current target version 7.
+    v4 entry therefore ends up at the current target version 8.
     """
 
     @staticmethod
@@ -246,8 +273,8 @@ class TestUniqueIdHashMigration:
         return f"go_gauge_{hashlib.sha256(token.encode()).hexdigest()[:16]}"
 
     @pytest.mark.asyncio
-    async def test_v4_to_v7_hashes_unique_id(self):
-        """[AUDIT-P2-11] v4->v7 replaces the plaintext-fragment id with the hash."""
+    async def test_v4_to_v8_hashes_unique_id(self):
+        """[AUDIT-P2-11] v4->v8 replaces the plaintext-fragment id with the hash."""
         token = "MyWorkspaceToken-abcdef123456"
         entry = MagicMock()
         entry.version = 4
@@ -262,19 +289,22 @@ class TestUniqueIdHashMigration:
         result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        assert entry.version == 7
+        assert entry.version == 8
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
         # (a) new unique_id equals the exact SHA-256 result
         assert call_args[1]["unique_id"] == self._expected(token)
         # no plaintext token fragment survives in the id
         assert token[:16].lower() not in call_args[1]["unique_id"]
-        # (c) entry.data (token etc.) is preserved untouched
-        assert call_args[1]["data"] == {"token": token, "workspace_name": "WS"}
+        # (c) entry.data (token etc.) is preserved untouched - the v8 step only
+        # adds the entry_kind marker.
+        assert call_args[1]["data"] == {
+            "token": token, "workspace_name": "WS", "entry_kind": "workspace",
+        }
 
     @pytest.mark.asyncio
     async def test_v5_entry_migration_is_idempotent(self):
-        """[AUDIT-P2-11] An already-hashed v5 entry keeps its id and reaches v7."""
+        """[AUDIT-P2-11] An already-hashed v5 entry keeps its id and reaches v8."""
         token = "StableToken-0987654321"
         hashed = self._expected(token)
         entry = MagicMock()
@@ -289,7 +319,7 @@ class TestUniqueIdHashMigration:
         result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        assert entry.version == 7
+        assert entry.version == 8
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
         # unique_id stays the already-hashed value (no re-hash, no corruption)
@@ -311,22 +341,45 @@ class TestUniqueIdHashMigration:
         result = await init_module.async_migrate_entry(hass, entry)
 
         assert result is True
-        assert entry.version == 7
+        assert entry.version == 8
         call_args = hass.config_entries.async_update_entry.call_args
         assert call_args is not None
         # Defensive: without a token the old unique_id is left as-is.
         assert call_args[1]["unique_id"] == old_uid
 
 
-class TestAsyncSetupEntryLogic:
-    """Tests for async_setup_entry() registry and catalog-owner logic.
+class _TolerantPathCoordinator:
+    """Coordinator double whose FIRST refresh always fails (offline start).
 
-    Tests the real async_setup_entry function from __init__.py.
+    The real tolerant path is what publishes the fallback snapshot with the
+    usage-only keys (plan §2.6/§2.7); ``async_set_updated_data`` records it so a
+    test can assert the exact key set without a real HA coordinator.
+    """
+
+    auto_usage = True
+    usage_minutes = 10
+
+    def __init__(self) -> None:
+        self.updates: list[dict] = []
+
+    async def async_config_entry_first_refresh(self) -> None:
+        raise RuntimeError("cloudflare down")
+
+    def async_set_updated_data(self, data: dict) -> None:
+        self.updates.append(data)
+
+
+class TestAsyncSetupEntryLogic:
+    """Tests for async_setup_entry() of a workspace entry (2.0.0).
+
+    No catalog-owner mechanism exists anymore (plan §2.6/B2): the account entry
+    owns the catalog; a workspace only registers its runtime and forwards
+    ``PLATFORMS``.
     """
 
     @pytest.mark.asyncio
-    async def test_first_entry_becomes_catalog_owner(self):
-        """[AUDIT-P2-11] First entry setup marks it as catalog owner."""
+    async def test_workspace_setup_registers_coordinator_without_owner_key(self):
+        """[PLAN2-B2] Workspace setup creates no ``_catalog_owner`` marker."""
         entry = MagicMock()
         entry.entry_id = "entry_1"
         entry.data = {"token": "test-token", "workspace_name": "WS1"}
@@ -337,44 +390,113 @@ class TestAsyncSetupEntryLogic:
         conftest.install_applying_config_entries(hass)
         hass.config_entries.async_forward_entry_setups = AsyncMock()
 
-        # Mock the coordinator to avoid complex initialization
-        with patch.object(
-            init_module, "GoGaugeCoordinator", MagicMock()
-        ):
+        with patch.object(init_module, "GoGaugeCoordinator", MagicMock()), \
+                patch.object(
+                    init_module, "async_ensure_account_entry",
+                    new_callable=AsyncMock,
+                ):
             result = await init_module.async_setup_entry(hass, entry)
 
-        # Setup should succeed
         assert result is True
-        # First entry should become catalog owner
-        assert hass.data["go_gauge"]["_catalog_owner"] == "entry_1"
+        assert "entry_1" in hass.data["go_gauge"]
+        assert "_catalog_owner" not in hass.data["go_gauge"]
 
     @pytest.mark.asyncio
-    async def test_second_entry_is_not_catalog_owner(self):
-        """[AUDIT-P2-11] Second entry does NOT become catalog owner."""
-        entry = MagicMock()
-        entry.entry_id = "entry_2"
-        entry.data = {"token": "test-token", "workspace_name": "WS2"}
-        entry.options = {}
-
-        # Set up pre-existing registry with first entry as owner
+    async def test_two_workspaces_never_become_owner(self):
+        """[PLAN2-B2] N workspace entries -> N runtimes, still no owner key."""
         hass = MagicMock()
-        hass.data = {
-            "go_gauge": {
-                "entry_1": MagicMock(),
-                "_catalog_owner": "entry_1",
-            }
-        }
+        hass.data = {}
         conftest.install_applying_config_entries(hass)
         hass.config_entries.async_forward_entry_setups = AsyncMock()
 
-        with patch.object(
-            init_module, "GoGaugeCoordinator", MagicMock()
-        ):
-            result = await init_module.async_setup_entry(hass, entry)
+        with patch.object(init_module, "GoGaugeCoordinator", MagicMock()), \
+                patch.object(
+                    init_module, "async_ensure_account_entry",
+                    new_callable=AsyncMock,
+                ):
+            for index in (1, 2):
+                entry = MagicMock()
+                entry.entry_id = f"entry_{index}"
+                entry.data = {
+                    "token": f"token-{index}", "workspace_name": f"WS{index}"
+                }
+                entry.options = {}
+                assert await init_module.async_setup_entry(hass, entry) is True
 
-        assert result is True
-        # Second entry should NOT become owner
-        assert hass.data["go_gauge"]["_catalog_owner"] == "entry_1"
+        assert set(hass.data["go_gauge"]) == {"entry_1", "entry_2"}
+
+    @pytest.mark.asyncio
+    async def test_tolerant_first_refresh_publishes_usage_only_snapshot(self):
+        """[PLAN2-M3] The fallback snapshot has the exact usage-only key set."""
+        entry = MagicMock()
+        entry.entry_id = "entry_offline"
+        entry.data = {"token": "test-token", "workspace_name": "Offline"}
+        entry.options = {}
+
+        hass = MagicMock()
+        hass.data = {}
+        conftest.install_applying_config_entries(hass)
+        hass.config_entries.async_forward_entry_setups = AsyncMock()
+        coordinator = _TolerantPathCoordinator()
+
+        with patch.object(
+            init_module, "GoGaugeCoordinator", MagicMock(return_value=coordinator)
+        ), patch.object(
+            init_module, "async_ensure_account_entry", new_callable=AsyncMock
+        ):
+            assert await init_module.async_setup_entry(hass, entry) is True
+
+        assert coordinator.updates, "fallback snapshot must be published"
+        assert set(coordinator.updates[0]) == {
+            "fetched_at",
+            "last_usage_fetch",
+            "last_usage_ok",
+            "last_usage_attempt",
+            "last_usage_outcome",
+            "auto_usage",
+            "usage_refresh_minutes",
+            "workspaces",
+        }
+
+    @pytest.mark.asyncio
+    async def test_auth_failed_first_refresh_does_not_abort_setup(self):
+        """[REQ-017] A 401 first refresh keeps the workspace setup alive.
+
+        Regression guard: re-raising ``ConfigEntryAuthFailed`` aborted the setup,
+        so no platform loaded and the ApiStatusSensor could not name the cause.
+        """
+        entry = MagicMock()
+        entry.entry_id = "entry_auth"
+        entry.data = {"token": "expired", "workspace_name": "Auth WS"}
+        entry.options = {}
+
+        hass = MagicMock()
+        hass.data = {}
+        conftest.install_applying_config_entries(hass)
+        hass.config_entries.async_forward_entry_setups = AsyncMock()
+        hass.config_entries.flow.async_progress_by_handler = MagicMock(
+            return_value=[]
+        )
+
+        async def _fail_first_refresh():
+            raise init_module.ConfigEntryAuthFailed("HTTP 401")
+
+        coordinator = MagicMock()
+        coordinator.data = None
+        coordinator.async_config_entry_first_refresh = _fail_first_refresh
+
+        with patch.object(
+            init_module, "GoGaugeCoordinator",
+            MagicMock(return_value=coordinator),
+        ), patch.object(
+            init_module, "async_ensure_account_entry", new_callable=AsyncMock
+        ):
+            assert await init_module.async_setup_entry(hass, entry) is True
+
+        # The runtime is registered (no cleanup before a re-raise) and the
+        # platforms were forwarded so the diagnostic becomes visible.
+        assert hass.data["go_gauge"]["entry_auth"] is coordinator
+        hass.config_entries.async_forward_entry_setups.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_entry_registered_in_domain_registry(self):
@@ -431,35 +553,16 @@ class TestAsyncUnloadEntryLogic:
         assert "entry_keep" in hass.data["go_gauge"]
 
     @pytest.mark.asyncio
-    async def test_unload_catalog_owner_removes_marker(self):
-        """[AUDIT-P2-11] Unloading the catalog owner removes the marker."""
-        entry = MagicMock()
-        entry.entry_id = "entry_owner"
+    async def test_unload_does_not_create_or_touch_owner_keys(self):
+        """[PLAN2-B2] Workspace unload neither owns nor transfers anything.
 
-        hass = MagicMock()
-        hass.data = {
-            "go_gauge": {
-                "entry_owner": MagicMock(),
-                "_catalog_owner": "entry_owner",
-            }
-        }
-        conftest.install_applying_config_entries(hass)
-        hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
+        Since 2.0.0 there is no catalog owner (the account entry owns the
+        catalog), so unloading a workspace must not write ``_catalog_owner``
+        and must leave every other runtime object untouched.
+        """
+        entry1_id = "entry_first"
+        entry2_id = "entry_second"
 
-        result = await init_module.async_unload_entry(hass, entry)
-
-        assert result is True
-        assert "_catalog_owner" not in hass.data["go_gauge"]
-        assert "entry_owner" not in hass.data["go_gauge"]
-
-    @pytest.mark.asyncio
-    async def test_unload_catalog_owner_transfers_ownership(self):
-        """[AUDIT-P2-11] Unloading the catalog owner transfers it to next coordinator."""
-        entry1_id = "entry_owner"
-        entry2_id = "entry_successor"
-
-        # Create mock coordinators that pass isinstance check
-        coord1 = MagicMock(spec=coordinator.GoGaugeCoordinator)
         coord2 = MagicMock(spec=coordinator.GoGaugeCoordinator)
 
         entry = MagicMock()
@@ -468,9 +571,8 @@ class TestAsyncUnloadEntryLogic:
         hass = MagicMock()
         hass.data = {
             "go_gauge": {
-                entry1_id: coord1,
+                entry1_id: MagicMock(spec=coordinator.GoGaugeCoordinator),
                 entry2_id: coord2,
-                "_catalog_owner": entry1_id,
             }
         }
         conftest.install_applying_config_entries(hass)
@@ -479,9 +581,9 @@ class TestAsyncUnloadEntryLogic:
         result = await init_module.async_unload_entry(hass, entry)
 
         assert result is True
-        # Owner should be transferred to next coordinator
-        assert hass.data["go_gauge"].get("_catalog_owner") == entry2_id
-        assert coord2.is_catalog_owner is True
+        assert entry1_id not in hass.data["go_gauge"]
+        assert hass.data["go_gauge"][entry2_id] is coord2
+        assert "_catalog_owner" not in hass.data["go_gauge"]
 
     @pytest.mark.asyncio
     async def test_unload_preserves_non_coordinator_data(self):
@@ -543,6 +645,417 @@ class TestMigrationVersionConversions:
             # Migration preserves the name exactly as stored
             preserved_name = name
             assert preserved_name == name
+
+
+
+class TestAsyncMigrateEntryV8:
+    """[PLAN2-B4] v8 marks every entry explicitly - O(1), no registry/network work.
+
+    The v8 step must only set ``data[CONF_ENTRY_KIND]``: a raising spy on the
+    entity registry proves the step never touches HA's registry, and a single
+    ``async_update_entry`` proves the write stays atomic.
+    """
+
+    @pytest.mark.asyncio
+    async def test_migrate_v7_to_v8_sets_entry_kind(self):
+        """[PLAN2-B4] v7 -> v8 sets entry_kind=workspace with one atomic update."""
+        entry = conftest.StrictConfigEntry(
+            version=7,
+            unique_id="go_gauge_deadbeefdeadbeef",
+            data={"token": "tok-123", "workspace_name": "WS"},
+            options={"warn_percent": 80},
+        )
+        hass = MagicMock()
+        conftest.install_applying_config_entries(hass)
+
+        from homeassistant.helpers import entity_registry as er_module
+
+        registry_spy = AsyncMock(
+            side_effect=AssertionError("v8 must not touch the entity registry")
+        )
+        with patch.object(er_module, "async_migrate_entries", registry_spy), \
+                patch.object(
+                    init_module, "_async_migrate_entity_names", new_callable=AsyncMock
+                ) as migrate_names, \
+                patch.object(
+                    init_module, "_async_migrate_entity_ids", new_callable=AsyncMock
+                ) as migrate_ids:
+            result = await init_module.async_migrate_entry(hass, entry)
+
+        assert result is True
+        assert entry.version == 8
+        assert entry.data[const.CONF_ENTRY_KIND] == const.ENTRY_KIND_WORKSPACE
+        # Neither registry migration step ran, and the raw registry was untouched.
+        migrate_names.assert_not_awaited()
+        migrate_ids.assert_not_awaited()
+        registry_spy.assert_not_awaited()
+
+        update = hass.config_entries.async_update_entry
+        update.assert_called_once()
+        kwargs = update.call_args.kwargs
+        assert kwargs["version"] == 8
+        assert kwargs["data"] == {
+            "token": "tok-123", "workspace_name": "WS", "entry_kind": "workspace",
+        }
+        assert kwargs["options"] == {"warn_percent": 80}
+        assert kwargs["unique_id"] == "go_gauge_deadbeefdeadbeef"
+
+    @pytest.mark.asyncio
+    async def test_migrate_v8_entry_is_accepted(self):
+        """[PLAN2-B4] An entry already at v8 is valid (no downgrade/reject)."""
+        entry = MagicMock()
+        entry.version = 8
+        entry.unique_id = "go_gauge_deadbeefdeadbeef"
+        entry.data = {"token": "tok-123", "workspace_name": "WS", "entry_kind": "workspace"}
+        entry.options = {}
+
+        hass = MagicMock()
+        conftest.install_applying_config_entries(hass)
+
+        result = await init_module.async_migrate_entry(hass, entry)
+
+        assert result is True
+        assert entry.version == 8
+        assert entry.data["entry_kind"] == "workspace"
+
+
+def _config_entry_double(
+    entry_id: str,
+    *,
+    unique_id: str | None = None,
+    data: dict | None = None,
+    disabled_by: object = None,
+    state: object = "not_loaded",
+):
+    """Build a minimal ConfigEntry-like object for the ``ensure`` tests."""
+    entry = MagicMock()
+    entry.entry_id = entry_id
+    entry.unique_id = unique_id
+    entry.data = dict(data) if data is not None else {}
+    entry.disabled_by = disabled_by
+    entry.state = state
+    return entry
+
+
+def _ensure_hass(entries: list):
+    """Build a ``hass`` whose config entries return ``entries`` (offline doubles)."""
+    hass = MagicMock()
+    hass.data = {}
+    conftest.install_applying_config_entries(hass)
+    hass.config_entries.async_entries = MagicMock(return_value=list(entries))
+    hass.config_entries.async_setup = AsyncMock(return_value=True)
+    hass.config_entries.flow.async_init = AsyncMock()
+    return hass
+
+
+def _scheduling_hass() -> tuple[MagicMock, list]:
+    """Return a ``hass`` double whose ``async_create_task`` really schedules.
+
+    ``async_setup`` must NOT await the account ensure (HA self-await hazard, see
+    its docstring); it schedules it as a task. A plain ``MagicMock`` would
+    accept the coroutine and never run it (plus a "never awaited" warning), so
+    this helper turns ``async_create_task`` into a real ``asyncio`` task and
+    collects it for the test to await.
+    """
+    hass = MagicMock()
+    hass.data = {}
+    tasks: list = []
+
+    def _create_task(coro, name=None):
+        task = asyncio.ensure_future(coro)
+        tasks.append(task)
+        return task
+
+    hass.async_create_task = MagicMock(side_effect=_create_task)
+    return hass, tasks
+
+
+class TestAsyncSetupEnsuresAccount:
+    """[PLAN2-E2] Domain ``async_setup`` schedules the account ensure tolerantly.
+
+    Review fix (blocker 1): the ensure is scheduled as a TASK, never awaited in
+    place. Awaiting it inside the domain setup let an account-entry setup wait
+    for the very component setup that was awaiting the ensure (HA self-await
+    deadlock, 300 s timeout).
+    """
+
+    @pytest.mark.asyncio
+    async def test_async_setup_schedules_ensure_as_task(self):
+        """[PLAN2-E2] async_setup returns True and runs ensure in its own task."""
+        hass, tasks = _scheduling_hass()
+
+        with patch.object(
+            init_module, "async_ensure_account_entry", new_callable=AsyncMock
+        ) as ensure:
+            result = await init_module.async_setup(hass, {})
+
+            assert result is True
+            assert len(tasks) == 1
+            hass.async_create_task.assert_called_once()
+            assert hass.async_create_task.call_args.kwargs["name"] == (
+                f"{const.DOMAIN}_ensure_account"
+            )
+            ensure.assert_not_awaited()  # not awaited inside the setup
+
+            await asyncio.gather(*tasks)
+
+        ensure.assert_awaited_once_with(hass)
+
+    @pytest.mark.asyncio
+    async def test_async_setup_returns_true_when_ensure_raises(self):
+        """[PLAN2-E2, PLAN2-M5] The scheduled ensure swallows its own exception."""
+        hass, tasks = _scheduling_hass()
+
+        with patch.object(
+            init_module, "async_ensure_account_entry",
+            new_callable=AsyncMock, side_effect=RuntimeError("ensure boom"),
+        ):
+            result = await init_module.async_setup(hass, {})
+            assert result is True
+            # Must not raise: the task body guards the ensure call.
+            await asyncio.gather(*tasks)
+
+    @pytest.mark.asyncio
+    async def test_async_setup_survives_unschedulable_task(self):
+        """[PLAN2-M5] A failing ``async_create_task`` (shutdown) is only logged."""
+        hass = MagicMock()
+        hass.data = {}
+        hass.async_create_task = MagicMock(side_effect=RuntimeError("loop closed"))
+
+        result = await init_module.async_setup(hass, {})
+
+        assert result is True
+
+
+class TestEnsureAccountEntry:
+    """[PLAN2-B3] ``async_ensure_account_entry`` creates/loads the singleton entry.
+
+    Phase A scope: the full ensure logic (plan §7.2) is implemented here, while
+    the account *runtime* (coordinator/platforms) is still a stub. The tests
+    therefore assert the entry bookkeeping and the tolerance guarantees.
+    """
+
+    @pytest.mark.asyncio
+    async def test_creates_account_entry_via_import_flow(self):
+        """[PLAN2-B3] Workspace present + no account entry -> import flow starts."""
+        workspace = _config_entry_double(
+            "ws1", data={"token": "tok", "workspace_name": "WS"}
+        )
+        hass = _ensure_hass([workspace])
+
+        await init_module.async_ensure_account_entry(hass)
+
+        hass.config_entries.flow.async_init.assert_awaited_once_with(
+            const.DOMAIN, context={"source": account_module.SOURCE_IMPORT}
+        )
+        hass.config_entries.async_setup.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_workspace_means_no_account_entry(self):
+        """[PLAN2-E2] A bare start without any entry creates nothing."""
+        hass = _ensure_hass([])
+
+        await init_module.async_ensure_account_entry(hass)
+
+        hass.config_entries.flow.async_init.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_disabled_workspace_does_not_trigger_creation(self):
+        """[PLAN2-E2] Only an ENABLED workspace justifies an account entry."""
+        workspace = _config_entry_double(
+            "ws1", data={"token": "tok"}, disabled_by="user"
+        )
+        hass = _ensure_hass([workspace])
+
+        await init_module.async_ensure_account_entry(hass)
+
+        hass.config_entries.flow.async_init.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_loaded_account_entry_is_a_noop(self):
+        """[PLAN2-E2] A loaded account entry is left alone."""
+        account = _config_entry_double(
+            "acc1",
+            unique_id=const.ACCOUNT_ENTRY_UNIQUE_ID,
+            data={"entry_kind": "account"},
+            state=conftest.install_config_entry_state_stub().LOADED,
+        )
+        hass = _ensure_hass([account])
+
+        await init_module.async_ensure_account_entry(hass)
+
+        hass.config_entries.async_setup.assert_not_awaited()
+        hass.config_entries.flow.async_init.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_not_loaded_account_entry_is_left_to_ha(self, caplog):
+        """[PLAN2-E2] An existing but unloaded account entry is NOT set up.
+
+        Review fix (blocker 2b): HA sets stored entries up itself (plan §7.2);
+        an extra ``async_setup`` in the caller loaded the entry twice and spammed
+        ``OperationNotAllowed``. Only a DEBUG line documents the state.
+        """
+        account = _config_entry_double(
+            "acc1",
+            unique_id=const.ACCOUNT_ENTRY_UNIQUE_ID,
+            data={"entry_kind": "account"},
+        )
+        hass = _ensure_hass([account])
+
+        with caplog.at_level("DEBUG"):
+            await init_module.async_ensure_account_entry(hass)
+
+        hass.config_entries.async_setup.assert_not_awaited()
+        hass.config_entries.flow.async_init.assert_not_awaited()
+        assert "not loaded" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_disabled_account_entry_is_respected(self):
+        """[PLAN2-E2] A disabled account entry is never re-created or re-enabled."""
+        account = _config_entry_double(
+            "acc1",
+            unique_id=const.ACCOUNT_ENTRY_UNIQUE_ID,
+            data={"entry_kind": "account"},
+            disabled_by="user",
+        )
+        hass = _ensure_hass([account])
+
+        await init_module.async_ensure_account_entry(hass)
+
+        hass.config_entries.async_setup.assert_not_awaited()
+        hass.config_entries.flow.async_init.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_duplicate_account_entries_keep_lowest_entry_id(self, caplog):
+        """[PLAN2-B3] Duplicates (hand-edited storage) only log and keep the first."""
+        first = _config_entry_double(
+            "acc_a",
+            unique_id=const.ACCOUNT_ENTRY_UNIQUE_ID,
+            data={"entry_kind": "account"},
+        )
+        second = _config_entry_double(
+            "acc_b",
+            unique_id=const.ACCOUNT_ENTRY_UNIQUE_ID,
+            data={"entry_kind": "account"},
+        )
+        hass = _ensure_hass([second, first])
+
+        with caplog.at_level("WARNING"):
+            await init_module.async_ensure_account_entry(hass)
+
+        # No setup call at all any more (review fix, plan §7.2): HA owns the
+        # (re)load of a stored entry.
+        hass.config_entries.async_setup.assert_not_awaited()
+        hass.config_entries.flow.async_init.assert_not_awaited()
+        assert "2 account entries" in caplog.text
+        assert "acc_a" in caplog.text and "acc_b" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_flow_failure_never_propagates(self):
+        """[PLAN2-M5] A failing import flow only warns - ensure never raises."""
+        workspace = _config_entry_double("ws1", data={"token": "tok"})
+        hass = _ensure_hass([workspace])
+        hass.config_entries.flow.async_init = AsyncMock(
+            side_effect=RuntimeError("flow boom")
+        )
+
+        # Must not raise.
+        await init_module.async_ensure_account_entry(hass)
+
+        hass.config_entries.flow.async_init.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_non_dict_hass_data_is_tolerated(self):
+        """[PLAN2-M5] A Mock ``hass.data`` (legacy tests) never raises."""
+        hass = MagicMock()
+        hass.data = MagicMock()
+
+        await init_module.async_ensure_account_entry(hass)
+
+        hass.config_entries.flow.async_init.assert_not_called()
+
+
+class TestAccountEntryBranch:
+    """[PLAN2-A2] Account entries bypass the workspace setup path entirely."""
+
+    @pytest.mark.asyncio
+    async def test_account_entry_skips_workspace_path(self):
+        """[PLAN2-A2] No platform forward, no GoGaugeCoordinator for account entries."""
+        entry = MagicMock()
+        entry.entry_id = "account_entry"
+        entry.data = {const.CONF_ENTRY_KIND: const.ENTRY_KIND_ACCOUNT}
+        entry.options = {}
+
+        hass = MagicMock()
+        hass.data = {}
+        conftest.install_applying_config_entries(hass)
+        hass.config_entries.async_forward_entry_setups = AsyncMock()
+
+        with patch.object(init_module, "GoGaugeCoordinator") as coord_cls, \
+                patch.object(
+                    init_module, "async_setup_account_entry",
+                    new_callable=AsyncMock, return_value=True,
+                ) as setup_account:
+            result = await init_module.async_setup_entry(hass, entry)
+
+        assert result is True
+        setup_account.assert_awaited_once_with(hass, entry)
+        coord_cls.assert_not_called()
+        hass.config_entries.async_forward_entry_setups.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_account_entry_unload_unloads_account_platforms(self):
+        """[PLAN2-E4] Account unload unloads ACCOUNT_PLATFORMS (not PLATFORMS)."""
+        entry = MagicMock()
+        entry.entry_id = "account_entry"
+        entry.data = {const.CONF_ENTRY_KIND: const.ENTRY_KIND_ACCOUNT}
+
+        hass = MagicMock()
+        hass.data = {const.DOMAIN: {"account_entry": object()}}
+        conftest.install_applying_config_entries(hass)
+        hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
+
+        result = await init_module.async_unload_entry(hass, entry)
+
+        assert result is True
+        hass.config_entries.async_unload_platforms.assert_awaited_once_with(
+            entry, const.ACCOUNT_PLATFORMS
+        )
+        assert "account_entry" not in hass.data[const.DOMAIN]
+
+    @pytest.mark.asyncio
+    async def test_account_entry_remove_delegates(self):
+        """[PLAN2-A2] async_remove_entry routes the account kind to account.py."""
+        entry = MagicMock()
+        entry.entry_id = "account_entry"
+        entry.data = {const.CONF_ENTRY_KIND: const.ENTRY_KIND_ACCOUNT}
+
+        hass = MagicMock()
+        hass.data = {}
+
+        with patch.object(
+            init_module, "async_remove_account_entry", new_callable=AsyncMock
+        ) as remove_account:
+            await init_module.async_remove_entry(hass, entry)
+
+        remove_account.assert_awaited_once_with(hass, entry)
+
+    @pytest.mark.asyncio
+    async def test_workspace_entry_remove_is_a_noop(self):
+        """[PLAN2-A2] Workspace removal needs no domain-level cleanup."""
+        entry = MagicMock()
+        entry.entry_id = "ws_entry"
+        entry.data = {"token": "tok", "workspace_name": "WS"}
+
+        hass = MagicMock()
+        hass.data = {}
+
+        with patch.object(
+            init_module, "async_remove_account_entry", new_callable=AsyncMock
+        ) as remove_account:
+            await init_module.async_remove_entry(hass, entry)
+
+        remove_account.assert_not_awaited()
 
 
 if __name__ == "__main__":

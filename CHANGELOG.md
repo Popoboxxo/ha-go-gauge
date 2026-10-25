@@ -1,5 +1,184 @@
 # Changelog
 
+## [2.0.0] — 2026-10-25
+
+### Summary
+
+Die Konto-Daten (Modell-Katalog + Erreichbarkeit) verlassen den
+Workspace-Coordinator und bekommen eine **eigene, automatisch angelegte
+ConfigEntry** (`unique_id = go_gauge_account`, Titel `Go Gauge Konto`). Sie ist
+einzige Besitzerin der fünf Konto-Entities, der beiden globalen
+Konto-Einstellungen (Switch + Number), des Konto-Geräts `(DOMAIN, "account")`
+und eines eigenen Katalog-Refresh-Buttons. Workspace-Entries sind ab 2.0.0
+reine Usage-Instanzen.
+
+Damit entfallen drei Problemklassen strukturell: Owner-Wahl/Refcount,
+entry-lose Entities und die Katalog-Blockade der Workspace-Migration. Die
+Adoption der fünf Legacy-Entities läuft einmalig, idempotent und
+reihenfolgeunabhängig beim Konto-Setup; `entity_id`, History, Area und Labels
+bleiben erhalten.
+
+### ✨ Added
+
+- Automatisch angelegte **Konto-Entry** (`Go Gauge Konto`) — entsteht beim
+  ersten Workspace-Setup bzw. HA-Start über einen Import-Flow, ist nicht über
+  „Integration hinzufügen" erreichbar und wird nach dem Löschen beim nächsten
+  Setup/Start neu erzeugt.
+- **Konto-Gerät** `Go Gauge Konto` mit den fünf Konto-Entities (`account_model_catalog`,
+  `account_models_live_count`, `account_cheapest_model`, `account_free_models`,
+  `account_api_reachable`) sowie dem Konto-Refresh-Button.
+- **Globale Konto-Einstellungen** als Entities: `account_auto_update_models`
+  (Switch, Default **ON**) und `account_models_refresh_minutes` (Number,
+  **1–1440 min**, Default **60**) — inklusive eigenem Konto-Options-Flow.
+- **Konto-Refresh-Button** am Konto-Gerät (`unique_id = account_refresh`,
+  Translation-Key `refresh`) — lädt ausschließlich den Modell-Katalog über den
+  einzigen HTTP-Pfad des Konto-Coordinators. Er teilt den Key `refresh` mit dem
+  Workspace-Button; unterschieden werden beide nur über das Gerät („Go Gauge
+  Konto" vs. „Go Gauge <Workspace>"), daher ist die abgeleitete `entity_id`
+  device-präfixiert. Bestehende Installationen behalten ihre `entity_id`.
+- **Evidenz-/TTL-basierte Erreichbarkeit**: `api_reachable` ist ON bei
+  mindestens einem frischen Erfolg (Katalog- oder Usage-Fetch), `unknown` bei
+  „API hat geantwortet, aber kein Erfolg" (401/kein Abo) oder ohne frische
+  Evidenz, OFF nur bei ausschließlich frischen Fehlschlägen. TTL: Modelle 2×
+  Konto-Basisintervall (Fallback 120 min bei Auto-Refresh aus), Usage 3×
+  Workspace-Intervall. Attribute: `reachability_reason`, `evidence`,
+  `models_ttl_s`, `usage_ttl_s`, `checked_at`.
+- Konto-Settings als Attribute des Katalog-Sensors: `account_auto_update_models`,
+  `account_fetch_interval_minutes` (effektiv inkl. Backoff),
+  `account_models_refresh_minutes` (Basis) und `account_last_models_outcome`.
+- Repair-Issues für die Adoption: `account_entity_collision_<kind>`,
+  `account_device_merged`, `account_device_not_empty`, `adoption_unsupported`,
+  `adoption_failed`.
+- 5-Minuten-**Publish-Tick** des Konto-Coordinators: schreibt Zustand/Attribute
+  neu (macht TTL-Ablauf sichtbar), ohne HTTP.
+
+### 🔄 Changed
+
+- **Workspace-Refresh-Button lädt nur noch die Nutzung.** Der Katalog-Refresh
+  ist der separate Konto-Button; ein Workspace-Button löst keinen Katalog-Fetch
+  mehr aus.
+- **Konto-Fetch** folgt dem konfigurierten Basisintervall (1–1440 min), nicht
+  einem 5-Minuten-Deckel. Bei 403/Netzfehler greift exponentieller Backoff
+  (Verdopplung bis 60 min, Reset bei Erfolg); der Publish-Tick bleibt HTTP-frei.
+- **Workspace mit `auto_update_usage = false`** pollt gar nicht mehr
+  (`update_interval = None` statt 24-h-Fallback) — Sensoren zeigen den letzten
+  Stand bis zum Button/Service.
+- **Home-Assistant-Mindestversion 2026.8.0** (Device-Transfer über
+  `async_update_device(new_config_entry_id=…)`).
+- Diagnostics: Konto-Entry hat einen eigenen Zweig (ohne Token), Workspace-Zweig
+  liefert einen `account`-Block; `models_block_present`/Owner-Feld entfallen.
+- Die fünf Konto-Entities behalten bei der Registry-Adoption ihre `entity_id`;
+  `unique_id` wird auf die kanonische Form `account_<kind>` normalisiert.
+
+### 🐛 Fixed
+
+- `api_reachable` konnte eine veraltete, aber erfolgreiche Katalog-Antwort nicht
+  von einem frischen API-Ausfall unterscheiden; die Heuristik
+  `last_update_success and fetched_at` ist durch Evidenz + TTL ersetzt.
+- Die früheren Workspace-Modell-Regler waren pro Workspace wirkungslos bzw.
+  mehrdeutig; die Einstellungen wirken jetzt global am `AccountCoordinator`
+  (Fetch-Timer, Backoff) und werden in `entry.options` persistiert.
+- Übergangsfenster beim ersten v8-Start: Die fünf Entities sind kurz
+  `unavailable`, bis der Plattform-Forward greift — erwartet, kein Fehler.
+- Duplikat-Legacy-Entities werden deaktiviert und per Repair-Issue gemeldet,
+  nie automatisch gelöscht.
+
+Aus dem Live-E2E vor dem Release behoben:
+
+- Vertauschte `RegistryEntry`-Semantik (`platform` = Integrationsdomain,
+  `domain` = Entity-Domain): Die Adoption war ein No-op, und der anschließende
+  Device-Move hätte die 5 Alt-Entities gelöscht; dieselbe Verwechslung ließ die
+  Alt-Settings-Entfernung nie greifen.
+- 401 beim Erst-Refresh brach das Setup ab (Entities `unavailable` ohne Reauth)
+  — jetzt `auth_error` plus Reauth-Flow.
+- `device_registry.devices`-Mapping-Zugriff entfernt (HA-2027.9-Deprecation).
+- Adoptions-Teilfehler blockieren jetzt Device-Move/Forward (Setup `False` /
+  `SETUP_RETRY`) statt Datenverlust zu riskieren.
+
+### ✅ Verified
+
+- **638 Tests grün**; `ruff check custom_components tests scripts` sauber;
+  `mypy` sauber; `python3 scripts/check_json_consistency.py` grün;
+  `compileall` sauber; `manual_offline_smoke` grün.
+- **Canon-Check v1.4.0** (`check_canon.py` aus
+  `external/ha-gauge-standard`): `0 error(s), 0 warning(s)` gegen dieses Repo —
+  Canon v1.4.0 ist gepinnt und nutzbar.
+  Hinweis: Canon v1.4.0 ist inhaltlich noch auf dem Stand von go_gauge 1.6.0
+  (kein `account_entry`-Flag, `api_reachable` noch `last_update_success`-basiert,
+  „Refresh beider Zyklen") — Nachzug ist ein Canon-v1.5-Kandidat im
+  Submodul-Repo, kein Parent-Change.
+- **Live-E2E auf `/home/hermes/ha-test` (HA 2026.9.1) — PASS.** Vier Läufe: Lauf 1
+  legte die `RegistryEntry`-Semantik-Bugs offen (Adoption ein No-op, drohender Verlust
+  der 5 Alt-Entities, Alt-Settings wurden nie entfernt), Lauf 2 bestätigte die
+  funktionalen Fixes nach dem Registry-Restore, der Nachtrag-Sync den
+  `device_registry.devices`-Fix. Der finale Phase-F-Lauf nach den Review-Fixes ist
+  warnungsfrei und idempotent: 3 Syncs, `0` Treffer für
+  ERROR/CRITICAL/Traceback/`MIGRATION_ERROR`/`ValueError`/„does not generate unique IDs“
+  aus `go_gauge` und `0` Treffer der `device_registry.devices`-Deprecation (erwartet
+  bleiben nur die 401-Reauth-Warnung und HA's „not tested by HA“); 2 Config-Entries
+  (Workspace + Konto, beide `v8.1`, `state = loaded`), 39 aktive go_gauge-Entities,
+  2 deaktivierte Alt-Settings, 2 Devices, keine Duplikate. Die fünf Konto-Entities
+  behalten `entity_id`, `unique_id`, Registry-Zeilen-`id`, `device_id` und
+  `config_entry_id` über alle Syncs; der Konto-Button behält seine `entity_id` trotz
+  Key-Wechsel auf `refresh`. Idempotenz-Beleg: der dritte Sync ist für Entity-, Device-
+  und Config-Registry byte-identisch (md5), 39 aktiv / 2 deleted / 2 Devices / 2 Entries
+  / 243 States vor == nach. Protokoll:
+  `docs/E2E-v8-account-split-2026-10-25.md`.
+- **Offen (pending):** Lauf im HA-2026.8.0-Container — der E2E-PASS gilt ausschließlich
+  für HA 2026.9.1, die Mindestversion 2026.8.0 bleibt damit unbelegt. Ebenfalls
+  ausstehend: Canon-v1.5-Nachzug im Submodul-Repo, Release-Dreiklang
+  (Tag/Push/GitHub-Release) und der HACS-Update-Test.
+
+### 💥 Breaking Changes
+
+1. **Die fünf Konto-Entities wandern in eine eigene Konto-Entry.**
+   - *Was sich ändert:* Model Catalog, Live Models, Cheapest Model, Free Models
+     und API Reachable gehören jetzt der automatisch angelegten Konto-Entry statt
+     der ersten Workspace-Instanz („Catalog Owner" entfällt).
+   - *Was bleibt:* `entity_id`, History, Area und Labels bleiben erhalten
+     (Registry-Adoption). Zwischen dem ersten Start und dem Plattform-Forward
+     sind die Entities kurz `unavailable` — erwartet, kein Fehler.
+   - *Migration:* Einfach updaten, keine Nutzeraktion. Voraussetzung ist Home
+     Assistant 2026.8.0 oder neuer.
+
+2. **`unique_id`-Normalisierung auf `account_*`.**
+   - *Was sich ändert:* Die `unique_id` der fünf Konto-Entities wird einmalig auf
+     `account_model_catalog`, `account_models_live_count`, `account_cheapest_model`,
+     `account_free_models`, `account_api_reachable` normalisiert.
+   - *Was bleibt:* Die `entity_id` und damit Automatisierungen/Dashboards bleiben
+     unverändert; die History bleibt in der Recorder-Datenbank gebunden.
+   - *Migration:* Einfach updaten. Wer die `unique_id` in eigenen Skripten
+     referenziert, muss auf die neuen `account_*`-Werte umstellen.
+
+3. **Globale Konto-Settings ersetzen die Workspace-Modell-Regler.**
+   - *Was sich ändert:* `switch.<workspace>_auto_update_models` und
+     `number.<workspace>_models_refresh_minutes` werden aus der Entity-Registry
+     **entfernt**. Ersatz sind `account_auto_update_models` (Default ON) und
+     `account_models_refresh_minutes` (1–1440 min, Default 60) am Konto-Gerät.
+   - *Migration:* Globale Konto-Einstellungen einmal prüfen. Automatisierungen,
+     die auf die alten Workspace-Regler zeigen, auf die Konto-Entities umstellen.
+     Die Konto-Entry startet mit ON/60, sofern keine Konto-Options existieren.
+
+4. **Home-Assistant-Mindestversion 2026.8.0.**
+   - *Was sich ändert:* Ältere HA-Versionen werden nicht mehr unterstützt
+     (Device-Transfer `async_update_device(new_config_entry_id=…)`).
+   - *Migration:* Home Assistant vor dem Update auf 2026.8.0 oder neuer
+     aktualisieren.
+
+5. **Die Konto-Entry ist eine eigene Integrations-Instanz (automatisch).**
+   - *Was sich ändert:* Neben den Workspace-Entries existiert genau eine
+     Konto-Entry (`Go Gauge Konto`). Sie ist **nicht** über „Integration
+     hinzufügen" erreichbar und darf nie manuell angelegt werden.
+   - *Verhalten:* Löschen → Neuanlage beim nächsten Workspace-Setup/HA-Start;
+     war eine `entity_id` zuvor dedupliziert, kann sie sich dabei ändern.
+     Deaktivieren → Entities `unavailable`, kein Re-Create/Re-Enable.
+   - *Migration:* Keine Nutzeraktion nötig; die Entry wird beim ersten Setup
+     automatisch erzeugt.
+
+### Full Changelog
+
+https://github.com/Popoboxxo/ha-go-gauge/compare/v1.7.0...v2.0.0
+
 ## [1.7.0] - 2026-10-18
 
 ### Summary
