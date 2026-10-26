@@ -35,8 +35,12 @@
         "data": {
           "workspace_name": "Workspace-Name",
           "warn_percent": "Warnschwelle in Prozent",
+          "pace_red_percent": "Pace-Rot-Schwelle (%)",
           "auto_update_usage": "Nutzung automatisch aktualisieren",
-          "usage_refresh_minutes": "Nutzung: Refresh-Intervall (Minuten)"
+          "usage_refresh_minutes": "Nutzung: Refresh-Intervall (Minuten)",
+          "burn_lookback_5h_minutes": "Burn-Lookback 5h (min)",
+          "burn_lookback_week_minutes": "Burn-Lookback wöchentlich (min)",
+          "burn_lookback_month_minutes": "Burn-Lookback monatlich (min)"
         }
       },
       "account": {
@@ -110,6 +114,15 @@
       },
       "models_refresh_min": {
         "name": "Modelle Refresh (Minuten)"
+      },
+      "burn_lookback_5h": {
+        "name": "5h Burn-Lookback"
+      },
+      "burn_lookback_week": {
+        "name": "Wöchentlicher Burn-Lookback"
+      },
+      "burn_lookback_month": {
+        "name": "Monatlicher Burn-Lookback"
       }
     },
     "switch": {
@@ -123,6 +136,9 @@
     "button": {
       "refresh": {
         "name": "Aktualisieren"
+      },
+      "reset_burn_lookbacks": {
+        "name": "Burn-Lookbacks zurücksetzen"
       }
     }
   },

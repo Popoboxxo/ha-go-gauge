@@ -2,7 +2,8 @@
 
 2.0.0 split (plan §2.11):
 
-* workspace -> ``RefreshButton`` forces the usage cycle only;
+* workspace -> ``RefreshButton`` forces the usage cycle only and
+  ``ResetBurnLookbacksButton`` resets the three burn lookbacks (2.1.0);
 * account   -> ``AccountRefreshButton`` forces a catalog fetch via
   ``AccountCoordinator.async_fetch_now()`` (the only HTTP path of the account).
 """
@@ -13,17 +14,19 @@ from typing import TYPE_CHECKING
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     ACCOUNT_UNIQUE_ID_PREFIX,
+    BURN_LOOKBACK_WINDOWS,
     DOMAIN,
     ENTRY_KIND_ACCOUNT,
     conf_entry_kind,
 )
 from .coordinator import GoGaugeCoordinator
-from .entity import GoGaugeAccountEntityBase, GoGaugeEntityBase
+from .entity import GoGaugeAccountEntityBase, GoGaugeEntityBase, persist_options
 
 if TYPE_CHECKING:  # no runtime import: this module must stay loadable on its own
     from .account import AccountCoordinator
@@ -43,7 +46,10 @@ async def async_setup_entry(
         return
 
     coordinator: GoGaugeCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([RefreshButton(coordinator, entry)])
+    async_add_entities([
+        RefreshButton(coordinator, entry),
+        ResetBurnLookbacksButton(coordinator, entry),
+    ])
 
 
 class RefreshButton(GoGaugeEntityBase, ButtonEntity):
@@ -66,6 +72,35 @@ class RefreshButton(GoGaugeEntityBase, ButtonEntity):
         coordinator = self.coordinator
         coordinator.last_usage_fetch = None
         await coordinator.async_request_refresh()
+
+
+class ResetBurnLookbacksButton(GoGaugeEntityBase, ButtonEntity):
+    """Setzt NUR die drei Burn-Lookbacks eines Workspaces auf ihre Defaults.
+
+    Bewusst eng und vorhersagbar (plan D3): keine Sample-Historie, keine
+    Schwellen, kein Refresh-Intervall. ``EntityCategory.DIAGNOSTIC``, weil ein
+    Reset ein Reparaturwerkzeug ist und keine Konfiguration (D4).
+    """
+
+    _attr_icon = "mdi:restore"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "reset_burn_lookbacks"
+
+    def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_burn_lookback_reset"
+
+    async def async_press(self) -> None:
+        changes: dict[str, int] = {}
+        for window, spec in BURN_LOOKBACK_WINDOWS.items():
+            default = int(spec["default"])
+            self.coordinator.set_burn_lookback(window, default)
+            changes[spec["option"]] = default
+        # EIN Schreibvorgang fuer alle drei Optionen (ein Update-Listener-Lauf).
+        persist_options(self.hass, self._entry, self.coordinator, **changes)
+        # Burn-Rate-Sensoren sofort neu rendern, ohne auf den naechsten Poll zu warten.
+        self.coordinator.async_update_listeners()
+        self.async_write_ha_state()
 
 
 class AccountRefreshButton(GoGaugeAccountEntityBase, ButtonEntity):

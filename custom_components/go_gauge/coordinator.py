@@ -25,8 +25,12 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
+from . import burn_lookback as bl
 from .api import OpenCodeGoApiClient
 from .const import (
+    BURN_LOOKBACK_WINDOWS,
+    BURN_RATE_MIN_SPAN_SECONDS,
+    BURN_SAMPLE_CAP,
     CONF_AUTO_UPDATE_USAGE,
     CONF_USAGE_REFRESH_MINUTES,
     DEFAULT_USAGE_REFRESH_MINUTES,
@@ -41,9 +45,24 @@ _LOGGER = logging.getLogger(__name__)
 # %/h slope. A full hour-plus of history keeps the slope stable across the
 # short 5h rolling window while still ignoring long-past consumption.
 BURN_RATE_LOOKBACK_SECONDS = 2 * 3600
-# Minimum time span between the oldest and newest sample for a meaningful
-# slope - below 5min the quotient amplifies poll jitter into noise.
-BURN_RATE_MIN_SPAN_SECONDS = 300
+
+
+def _unavailable_forecast(window: str) -> dict[str, Any]:
+    """Return the "no fake number" forecast block of one window (D23).
+
+    ``window_seconds`` stays the window's nominal length so consumers can still
+    render the timeframe; every derived value is ``None``.
+    """
+    nominal = WINDOW_SECONDS.get(window)
+    return {
+        "forecast": None,
+        "forecast_recent": None,
+        "forecast_method": "unavailable",
+        "elapsed_fraction": None,
+        "window_seconds": float(nominal) if nominal is not None else None,
+        "remaining_seconds": None,
+    }
+
 
 def window_elapsed_fraction(win: str, resets_at: datetime | None,
                              now: datetime | None = None) -> float | None:
@@ -51,6 +70,10 @@ def window_elapsed_fraction(win: str, resets_at: datetime | None,
 
     None right after a reset (elapsed <= 0) - dividing by a near-zero
     fraction would blow the forecast up into meaningless numbers.
+
+    .. deprecated::
+        Kept for backwards compatibility; no production caller since 2.1.0.
+        New code uses ``burn_lookback.compute_forecast``.
     """
     if resets_at is None:
         return None
@@ -67,7 +90,13 @@ def window_elapsed_fraction(win: str, resets_at: datetime | None,
 
 def forecast_percent(ws: dict[str, Any] | None, win: str,
                       now: datetime | None = None) -> float | None:
-    """Linear pace projection: current percent extrapolated to window end."""
+    """Linear pace projection: current percent extrapolated to window end.
+
+    .. deprecated::
+        Kept for backwards compatibility; no production caller since 2.1.0.
+        New code uses ``burn_lookback.compute_forecast`` (calendar-month aware
+        and able to fall back to the recent burn rate).
+    """
     if not ws or ws.get("status") in ("no_subscription", "error"):
         return None
     blk = (ws.get("windows") or {}).get(win) or {}
@@ -129,7 +158,7 @@ def seconds_until_reset(ws: dict[str, Any] | None, win: str,
     return max((resets_at - now).total_seconds(), 0.0)
 
 
-def burn_rate_per_hour(samples: list[tuple[datetime, float]] | None,
+def burn_rate_per_hour(samples: list[tuple[Any, ...]] | None,
                        now: datetime | None = None) -> float | None:
     """Consumption slope in %/h over the recent sample history.
 
@@ -138,14 +167,22 @@ def burn_rate_per_hour(samples: list[tuple[datetime, float]] | None,
     - A negative slope means a window reset happened between samples and is
       not a "rate" - returns None (the history recorder clears on reset, so
       this is only a defensive fallback).
+    - Tolerates both 2-tuple and 3-tuple samples (``ts, pct = sample[0],
+      sample[1]``); the third element (``resets_at``) is ignored here.
+
+    .. deprecated::
+        Kept for backwards compatibility; no production caller since 2.1.0.
+        New code uses ``GoGaugeCoordinator.burn_rate`` (OLS with intercept over
+        the configurable lookback).
     """
     if not samples or len(samples) < 2:
         return None
     now = now or datetime.now(timezone.utc)
-    recent = [
-        (ts, pct) for ts, pct in samples
-        if (now - ts).total_seconds() <= BURN_RATE_LOOKBACK_SECONDS
-    ]
+    recent: list[tuple[datetime, float]] = []
+    for sample in samples:
+        ts, pct = sample[0], sample[1]
+        if (now - ts).total_seconds() <= BURN_RATE_LOOKBACK_SECONDS:
+            recent.append((ts, pct))
     if len(recent) < 2:
         return None
     first_ts, first_pct = recent[0]
@@ -200,6 +237,13 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.auto_usage = options.get(CONF_AUTO_UPDATE_USAGE, True)
         self.usage_minutes = int(
             options.get(CONF_USAGE_REFRESH_MINUTES, DEFAULT_USAGE_REFRESH_MINUTES))
+        # Per-window burn-rate lookback (2.1.0): parsed/normalised once here,
+        # then kept live by ``set_burn_lookback`` (Number entities + options
+        # flow). Keys are the window names "5h"/"week"/"month".
+        self.burn_lookback_minutes: dict[str, int] = {
+            win: bl.normalize_lookback_minutes(win, options.get(spec["option"]))
+            for win, spec in BURN_LOOKBACK_WINDOWS.items()
+        }
         # Warnschwelle + Ampel-Rot-Grenze als Runtime-Attribute (Number-Entities
         # schreiben sie live)
         from .const import (  # local import: no cycle at import time
@@ -228,9 +272,13 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.last_usage_attempt: datetime | None = None
         self.last_usage_ok: datetime | None = None
         self.last_usage_outcome: str | None = None
-        # Usage-Verlauf je Workspace-Fenster ("ws1:5h") -> [(ts, percent)],
-        # Basis der Burn-Rate-Berechnung (on-read, kein Reset-Job).
-        self._usage_samples: dict[str, list[tuple[datetime, float]]] = {}
+        # Usage-Verlauf je Workspace-Fenster ("ws1:5h") ->
+        # [(ts, percent, resets_at|None)]. Das dritte Element ist das
+        # ``resets_at`` des Samples (Reset-Erkennung D10); ältere 2-Tupel
+        # bleiben lesbar, weil alle Leser beide Formen tolerieren.
+        self._usage_samples: dict[
+            str, list[tuple[datetime, float, datetime | None]]
+        ] = {}
 
     def recalculate_interval(self) -> None:
         """Intervall nach Auto-Update-Schalter/Minuten NEU setzen (live).
@@ -249,31 +297,132 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.info("Go Gauge: Update-Intervall -> %s (usage=%s/%s min)",
                      interval, self.auto_usage, self.usage_minutes)
 
+    def set_burn_lookback(self, window: str, minutes: int) -> None:
+        """Set the live burn-rate lookback of one window (normalised).
+
+        The Number entities persist the option separately; this method only
+        updates the coordinator state that ``burn_rate``/diagnostics read.
+        """
+        self.burn_lookback_minutes[window] = bl.normalize_lookback_minutes(
+            window, minutes
+        )
+
+    def burn_rate(self, key: str, window: str,
+                  now: datetime | None = None) -> float | None:
+        """OLS burn rate (%/h) of one workspace window over the lookback.
+
+        Defensive attribute access: lightweight test doubles may bind this
+        method without running ``GoGaugeCoordinator.__init__``.
+        """
+        now = now or datetime.now(timezone.utc)
+        store = getattr(self, "_usage_samples", None) or {}
+        samples = store.get(f"{key}:{window}", [])
+        lookbacks = getattr(self, "burn_lookback_minutes", None) or {}
+        lookback = lookbacks.get(window, bl.default_lookback_minutes(window))
+        return bl.ols_slope_per_hour(samples, now, lookback)
+
+    def forecast_details(self, key: str, window: str,
+                         now: datetime | None = None) -> dict[str, Any]:
+        """Return the forecast block of one workspace window (D11/D23).
+
+        Reads ``percent``/``resets_at`` from the published snapshot, feeds the
+        coordinator's current OLS burn rate into ``burn_lookback.compute_forecast``
+        and tolerates a missing workspace/window (then ``unavailable``).
+
+        A workspace whose ``status`` is ``"no_subscription"`` or ``"error"``
+        short-circuits to the unavailable block: no derived number may be
+        published for a workspace that has no usable usage data (the same
+        "no fake number" semantics the legacy ``forecast_percent`` had).
+        """
+        now = now or datetime.now(timezone.utc)
+        workspaces = (getattr(self, "data", None) or {}).get("workspaces") or []
+        workspace = next(
+            (ws for ws in workspaces if ws.get("key") == key), None
+        )
+        if workspace is not None and workspace.get("status") in (
+            "no_subscription", "error"
+        ):
+            return _unavailable_forecast(window)
+        block = ((workspace or {}).get("windows") or {}).get(window) or {}
+        return bl.compute_forecast(
+            window,
+            block.get("percent"),
+            block.get("resets_at"),
+            now,
+            self.burn_rate(key, window, now),
+        )
+
+    def burn_rate_diagnostics(self, key: str, window: str,
+                              now: datetime | None = None) -> dict[str, Any]:
+        """Return the debug block behind the burn-rate sensor (D14/D21).
+
+        ``samples`` counts only the samples inside the CONFIGURED lookback (not
+        the full retention horizon), so it explains a ``None`` burn rate.
+        """
+        now = now or datetime.now(timezone.utc)
+        lookbacks = getattr(self, "burn_lookback_minutes", None) or {}
+        lookback = lookbacks.get(window, bl.default_lookback_minutes(window))
+        usage_minutes = getattr(
+            self, "usage_minutes", DEFAULT_USAGE_REFRESH_MINUTES
+        )
+        store = getattr(self, "_usage_samples", None) or {}
+        samples = store.get(f"{key}:{window}", [])
+        count = len(bl.prune_samples(
+            samples,
+            now,
+            retention=bl.lookback_seconds(window, lookback),
+            cap=BURN_SAMPLE_CAP,
+        ))
+        return {
+            "lookback_minutes": lookback,
+            "samples": count,
+            "lookback_seconds": bl.lookback_seconds(window, lookback),
+            "lookback_too_short": bl.lookback_too_short(
+                lookback, usage_minutes
+            ),
+        }
+
     def _record_usage_sample(self, key: str, win: str, percent: float,
-                             now: datetime) -> None:
-        """Append a (timestamp, percent) sample for the burn-rate sensor.
+                             now: datetime,
+                             resets_at: datetime | None = None) -> None:
+        """Append a (timestamp, percent, resets_at) sample for the burn rate.
 
-        Window-reset detection: a percent DROP for the same window means the
-        window rolled over, so the pre-reset history is cleared first instead
-        of leaving a bogus negative slope behind. The history is pruned to
-        BURN_RATE_LOOKBACK_SECONDS and capped at 64 entries (newest kept) to
-        bound memory over long uptimes.
+        Window-reset detection (D10): a percent DROP or a CHANGED ``resets_at``
+        means the window rolled over, so pre-reset history is cleared first
+        instead of leaving a bogus negative slope behind. The history is always
+        pruned to the WINDOW's maximum retention horizon (not the current
+        lookback) so raising a lookback works immediately (D9), then capped
+        (newest kept). Retention is per window: 5h keeps 18000 s, week/month
+        604800 s (plan §9 item 3).
 
-        Defensive `getattr`: lightweight test doubles bind `_async_update_data`
-        without running GoGaugeCoordinator.__init__, so `_usage_samples` may
-        not exist yet.
+        Existing 2-tuple samples from an older runtime stay readable; new
+        samples are 3-tuples. Defensive `getattr`: lightweight test doubles
+        bind `_async_update_data` without running ``GoGaugeCoordinator.__init__``,
+        so `_usage_samples` may not exist yet.
         """
         store = getattr(self, "_usage_samples", None)
         if store is None:
             store = {}
             self._usage_samples = store
         samples = store.setdefault(f"{key}:{win}", [])
-        if samples and percent < samples[-1][1]:
+
+        reset_value = bl.sample_resets_at((now, float(percent), resets_at))
+        previous = samples[-1] if samples else None
+        if previous is not None and bl.is_window_reset(
+            bl.sample_percent(previous),
+            bl.sample_resets_at(previous),
+            float(percent),
+            reset_value,
+        ):
             samples.clear()
-        samples.append((now, percent))
-        cutoff = now - timedelta(seconds=BURN_RATE_LOOKBACK_SECONDS)
-        samples[:] = [s for s in samples if s[0] >= cutoff]
-        del samples[:-64]
+
+        samples.append((now, float(percent), reset_value))
+        samples[:] = bl.prune_samples(
+            samples,
+            now,
+            retention=bl.retention_seconds(win),
+            cap=BURN_SAMPLE_CAP,
+        )
 
     def _snapshot(
         self,
@@ -397,7 +546,10 @@ class GoGaugeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         for win, blk in entry["windows"].items():
                             pct = blk.get("percent")
                             if isinstance(pct, (int, float)):
-                                self._record_usage_sample(key, win, float(pct), now)
+                                self._record_usage_sample(
+                                    key, win, float(pct), now,
+                                    blk.get("resets_at"),
+                                )
                 except GoGaugeAuthError as err:
                     # Token ungueltig/abgelaufen (HTTP 401): NICHT als
                     # transienten Fehler behandeln. Workspace strukturiert als

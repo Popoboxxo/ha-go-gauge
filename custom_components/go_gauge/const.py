@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, TypedDict
 
 DOMAIN = "go_gauge"
 
@@ -130,7 +130,60 @@ WINDOW_LABELS = {"5h": "5h rolling", "week": "Weekly", "month": "Monthly"}
 # Nominal window length in seconds, used to project current pace onto the
 # rest of the window. "month" is an approximation (30 days) - die
 # opencode.ai-API liefert kein exaktes Kalendermonat-Fenster, nur resetsAt.
+# Kept as-is on purpose: since 2.1.0 it is only the FALLBACK for a "month"
+# window whose resetsAt cannot be interpreted (see burn_lookback.py); the
+# forecast itself uses the real calendar month length.
 WINDOW_SECONDS = {"5h": 5 * 3600, "week": 7 * 24 * 3600, "month": 30 * 24 * 3600}
+
+# --- Burn-rate lookback (2.1.0) -------------------------------------------
+# Per-workspace, per-window configurable lookback for the OLS burn-rate
+# slope. Keys are the option keys persisted in the ConfigEntry options; the
+# dict is the single source of truth for defaults, ranges and slider steps
+# (see docs/PLAN-burn-lookback-2.1.0.md D2/D6/D7).
+CONF_BURN_LOOKBACK_5H_MINUTES = "burn_lookback_5h_minutes"
+CONF_BURN_LOOKBACK_WEEK_MINUTES = "burn_lookback_week_minutes"
+CONF_BURN_LOOKBACK_MONTH_MINUTES = "burn_lookback_month_minutes"
+
+
+class _LookbackSpec(TypedDict):
+    """Static slider specification of one burn-lookback window (D6/D7)."""
+
+    option: str
+    default: int
+    min: int
+    max: int
+    step: int
+
+
+# Typed on purpose: without the annotation every consumer sees ``object`` for
+# ``["default"]``/``["min"]``/... and mypy rejects the arithmetic/comparisons.
+BURN_LOOKBACK_WINDOWS: dict[str, _LookbackSpec] = {
+    "5h": {"option": CONF_BURN_LOOKBACK_5H_MINUTES, "default": 120,
+           "min": 15, "max": 300, "step": 5},
+    "week": {"option": CONF_BURN_LOOKBACK_WEEK_MINUTES, "default": 720,
+             "min": 60, "max": 10080, "step": 60},
+    "month": {"option": CONF_BURN_LOOKBACK_MONTH_MINUTES, "default": 2880,
+              "min": 60, "max": 10080, "step": 60},
+}
+# Retain samples up to the LARGEST slider maximum (10080 min = 7 days) so
+# raising a lookback takes effect immediately instead of waiting for new
+# samples (D9). The cap bounds memory per workspace/window; at the default
+# 10 min poll interval 7 days is only ~1008 samples, so the cap only bites
+# for very short refresh intervals.
+BURN_LOOKBACK_RETENTION_SECONDS = 604800   # 10080 min = largest slider max
+BURN_SAMPLE_CAP = 10080                    # samples per workspace/window
+BURN_RATE_MIN_SAMPLES = 2
+# Minimum span between the oldest and newest sample for a meaningful slope -
+# below 5 min the quotient amplifies poll jitter into noise (D8).
+BURN_RATE_MIN_SPAN_SECONDS = 300
+# Forecast: below this elapsed time a pace projection (pct * T / t) is
+# statistically meaningless, so the recent burn-rate fallback is used (D11).
+MIN_FORECAST_ELAPSED_SECONDS = 900         # 15 min
+MIN_FORECAST_ELAPSED_FRACTION = 0.01       # 1 % of the real window length
+# lookback_too_short guard (D24): fewer than max(2 * refresh, 5) minutes of
+# history cannot yield a stable slope.
+LOOKBACK_TOO_SHORT_MIN_MINUTES = 5
+LOOKBACK_TOO_SHORT_REFRESH_FACTOR = 2
 
 # --- Entity naming ---------------------------------------------------------
 # Canonical English name fragments. They are the target values of the v6

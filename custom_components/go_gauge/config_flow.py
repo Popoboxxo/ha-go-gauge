@@ -401,6 +401,7 @@ class GoGaugeOptionsFlowHandler(config_entries.OptionsFlow):
 
         opts = self.entry.options
         from .const import (
+            BURN_LOOKBACK_WINDOWS,
             CONF_AUTO_UPDATE_USAGE,
             CONF_PACE_RED_PERCENT,
             CONF_USAGE_REFRESH_MINUTES,
@@ -411,6 +412,19 @@ class GoGaugeOptionsFlowHandler(config_entries.OptionsFlow):
         usage_minutes_default = opts.get(
             CONF_USAGE_REFRESH_MINUTES, DEFAULT_USAGE_REFRESH_MINUTES
         )
+        # Burn-Lookbacks (2.1.0, plan D13): dieselben Werte wie die Slider, aber
+        # mit Range-Validierung als Zahlenfelder. Defaults/Grenzen kommen aus der
+        # einzigen Quelle ``BURN_LOOKBACK_WINDOWS`` statt aus Literalen.
+        lookback_fields = {
+            vol.Required(
+                spec["option"],
+                default=opts.get(spec["option"], spec["default"]),
+            ): vol.All(
+                vol.Coerce(int),
+                vol.Range(min=spec["min"], max=spec["max"]),
+            )
+            for spec in BURN_LOOKBACK_WINDOWS.values()
+        }
         schema = vol.Schema({
             vol.Required("workspace_name",
                          default=self.entry.data.get("workspace_name", "")): str,
@@ -422,5 +436,6 @@ class GoGaugeOptionsFlowHandler(config_entries.OptionsFlow):
                          default=opts.get(CONF_AUTO_UPDATE_USAGE, True)): bool,
             vol.Required(CONF_USAGE_REFRESH_MINUTES,
                          default=usage_minutes_default): int,
+            **lookback_fields,
         })
         return self.async_show_form(step_id="init", data_schema=schema)

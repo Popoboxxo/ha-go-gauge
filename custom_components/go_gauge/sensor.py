@@ -33,8 +33,6 @@ from .const import (
 )
 from .coordinator import (
     GoGaugeCoordinator,
-    burn_rate_per_hour,
-    forecast_percent,
     pace_status,
     remaining_percent,
     seconds_until_reset,
@@ -191,14 +189,15 @@ class ResetTimestampSensor(GoGaugeEntityBase, SensorEntity):
 
 
 class UsageForecastSensor(GoGaugeEntityBase, SensorEntity):
-    """Linear projection of the window's usage percent onto the full window.
+    """Projection of the window's usage percent onto the full window.
 
-    forecast = percent / elapsed_fraction, elapsed_fraction = elapsed time
-    since window start / nominal window length (WINDOW_SECONDS). Can exceed
-    100% on purpose (Daniel-Feedback 2026-09-07) - that's the point, it
-    shows whether current pace will blow the budget before the window ends.
-    Right after a reset (elapsed_fraction ~ 0) the projection is undefined -
-    same "None instead of a fake number" pattern as UsagePercentSensor.
+    Since 2.1.0 the method is chosen by ``burn_lookback.compute_forecast``:
+    Ø-pace (``percent * T / elapsed``, ``T`` = real calendar-month length for
+    "month") once enough of the window has elapsed, a recent burn-rate fallback
+    before that, and ``0.0`` when nothing was used yet. Can exceed 100% on
+    purpose (Daniel-Feedback 2026-09-07) - that's the point, it shows whether
+    current pace will blow the budget before the window ends. A missing/
+    unparseable ``resets_at`` yields ``None`` (never a fake number, D23).
     """
 
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -216,7 +215,18 @@ class UsageForecastSensor(GoGaugeEntityBase, SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        return forecast_percent(self._ws(self._key), self._win)
+        return self.coordinator.forecast_details(
+            self._key, self._win)["forecast"]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        details = self.coordinator.forecast_details(self._key, self._win)
+        return {
+            "forecast_recent": details.get("forecast_recent"),
+            "forecast_method": details.get("forecast_method"),
+            "elapsed_fraction": details.get("elapsed_fraction"),
+            "window_seconds": details.get("window_seconds"),
+        }
 
 
 class UsagePaceSensor(GoGaugeEntityBase, SensorEntity):
@@ -224,6 +234,9 @@ class UsagePaceSensor(GoGaugeEntityBase, SensorEntity):
 
     Grenzen kommen aus zwei Number-Entities (einheitlich fuer alle Fenster):
     Warnschwelle = Gruen/Gelb-Grenze, Ampel-Rot-Grenze = Gelb/Rot-Grenze.
+    Die Ampel folgt dem primaeren Forecast: Ø-Pace, sobald die Mindestlaufzeit
+    erreicht ist, davor der Recent-Rate-Fallback (D12/§9.2); ``forecast_recent``
+    steht als Attribut daneben.
     """
 
     _attr_icon = "mdi:speedometer-medium"
@@ -239,7 +252,8 @@ class UsagePaceSensor(GoGaugeEntityBase, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        forecast = forecast_percent(self._ws(self._key), self._win)
+        forecast = self.coordinator.forecast_details(
+            self._key, self._win)["forecast"]
         if forecast is None:
             return None
         return pace_status(forecast, self.coordinator.warn_percent,
@@ -254,9 +268,16 @@ class UsagePaceSensor(GoGaugeEntityBase, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"forecast_percent": forecast_percent(self._ws(self._key), self._win),
-                "green_below": self.coordinator.warn_percent,
-                "red_above": self.coordinator.pace_red_percent}
+        details = self.coordinator.forecast_details(self._key, self._win)
+        return {
+            "forecast_percent": details.get("forecast"),
+            "forecast_recent": details.get("forecast_recent"),
+            "forecast_method": details.get("forecast_method"),
+            "elapsed_fraction": details.get("elapsed_fraction"),
+            "window_seconds": details.get("window_seconds"),
+            "green_below": self.coordinator.warn_percent,
+            "red_above": self.coordinator.pace_red_percent,
+        }
 
 
 class RemainingBudgetSensor(GoGaugeEntityBase, SensorEntity):
@@ -307,7 +328,7 @@ class TimeUntilResetSensor(GoGaugeEntityBase, SensorEntity):
 
 
 class BurnRateSensor(GoGaugeEntityBase, SensorEntity):
-    """Verbrauchstempo je Fenster in %/h (Steigung der letzten 2h)."""
+    """Verbrauchstempo je Fenster in %/h (OLS-Steigung im Lookback)."""
 
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "%/h"
@@ -324,10 +345,17 @@ class BurnRateSensor(GoGaugeEntityBase, SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        # Defensive getattr: leichte Test-Doubles binden die Entities ohne
-        # echten Coordinator (kein _usage_samples) - dann None statt Crash.
-        samples = getattr(self.coordinator, "_usage_samples", {}) or {}
-        return burn_rate_per_hour(samples.get(f"{self._key}:{self._win}", []))
+        return self.coordinator.burn_rate(self._key, self._win)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        diagnostics = self.coordinator.burn_rate_diagnostics(
+            self._key, self._win)
+        return {
+            "lookback_minutes": diagnostics.get("lookback_minutes"),
+            "samples": diagnostics.get("samples"),
+            "lookback_too_short": diagnostics.get("lookback_too_short"),
+        }
 
 
 class ModelCatalogSensor(GoGaugeAccountEntityBase, SensorEntity):
