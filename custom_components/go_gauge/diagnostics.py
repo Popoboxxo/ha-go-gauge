@@ -32,10 +32,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.loader import async_get_integration
 
 from .const import (
+    BURN_LOOKBACK_WINDOWS,
     DATA_ACCOUNT_KEY,
     DATA_ADOPTION_REPORT,
     DOMAIN,
     ENTRY_KIND_ACCOUNT,
+    WINDOW_LABELS,
     conf_entry_kind,
 )
 
@@ -143,6 +145,90 @@ def _workspace_states(data: dict[str, Any]) -> list[dict[str, Any]]:
         }
         for ws in data.get("workspaces", [])
     ]
+
+
+def _burn_call(method: Any, key: str, window: str) -> dict[str, Any]:
+    """Call one coordinator burn helper, returning only a real dict.
+
+    Diagnostics must never fail and must never leak a foreign object: a
+    ``None``/non-callable attribute (older runtime), an exception or a non-dict
+    return value all collapse to ``{}`` so the export simply omits the fields.
+    """
+    if not callable(method):
+        return {}
+    try:
+        result = method(key, window)
+    except Exception as err:  # noqa: BLE001 - diagnostics is best effort
+        _LOGGER.debug("Go Gauge: burn diagnostics skipped (%s)", err)
+        return {}
+    return result if isinstance(result, dict) else {}
+
+
+def _burn_block(coordinator: Any, ws_states: list[dict[str, Any]]) -> dict[str, Any]:
+    """Render the burn-rate debug block of a workspace entry (2.1.0, plan D14).
+
+    Answers "why is the burn rate ``unknown``" without a follow-up chat: the
+    configured lookback per window, its effective length in seconds, how many
+    samples fall into it, whether the lookback is too short for two polls and
+    which forecast method applied. Counts only - no sample values, no token.
+
+    Windows follow ``WINDOW_LABELS`` order. Every access is defensive: a
+    coordinator without the 2.1.0 methods (older or foreign object) yields empty
+    sub-dicts instead of raising.
+    """
+    windows = list(WINDOW_LABELS)
+    raw_lookbacks = getattr(coordinator, "burn_lookback_minutes", None)
+
+    lookback_minutes: dict[str, Any] = {}
+    lookback_seconds: dict[str, Any] = {}
+    for window in windows:
+        spec = BURN_LOOKBACK_WINDOWS.get(window)
+        default = spec["default"] if spec is not None else None
+        value = (
+            raw_lookbacks.get(window, default)
+            if isinstance(raw_lookbacks, dict)
+            else default
+        )
+        try:
+            minutes: int | None = int(value) if value is not None else None
+        except (TypeError, ValueError, OverflowError):
+            minutes = None
+        lookback_minutes[window] = minutes
+        lookback_seconds[window] = minutes * 60 if minutes is not None else None
+
+    diagnostics_method = getattr(coordinator, "burn_rate_diagnostics", None)
+    forecast_method = getattr(coordinator, "forecast_details", None)
+
+    workspaces: dict[str, Any] = {}
+    for ws in ws_states or []:
+        key = ws.get("key") if isinstance(ws, dict) else None
+        if not isinstance(key, str) or not key:
+            continue
+        samples: dict[str, Any] = {}
+        too_short: dict[str, Any] = {}
+        methods: dict[str, Any] = {}
+        fractions: dict[str, Any] = {}
+        for window in windows:
+            burn = _burn_call(diagnostics_method, key, window)
+            if burn:
+                samples[window] = burn.get("samples")
+                too_short[window] = burn.get("lookback_too_short")
+            forecast = _burn_call(forecast_method, key, window)
+            if forecast:
+                methods[window] = forecast.get("forecast_method")
+                fractions[window] = forecast.get("elapsed_fraction")
+        workspaces[key] = {
+            "samples": samples,
+            "lookback_too_short": too_short,
+            "forecast_method": methods,
+            "elapsed_fraction": fractions,
+        }
+
+    return {
+        "burn_lookback_minutes": lookback_minutes,
+        "lookback_seconds": lookback_seconds,
+        "workspaces": workspaces,
+    }
 
 
 def _account_hints(data: dict[str, Any], reachability: dict[str, Any] | None) -> list[str]:
@@ -308,6 +394,7 @@ def _workspace_diagnostics(
             "last_usage_outcome": data.get("last_usage_outcome"),
         },
         "account": account,
+        "burn": _burn_block(coordinator, ws_states),
         "workspaces": async_redact_data(ws_states, REDACT_KEYS),
         "interpretation_hints": _workspace_hints(data, ws_states, account),
     }

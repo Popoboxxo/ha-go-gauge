@@ -33,9 +33,21 @@ Zusatzkomponente. Nur dein Workspace-API-Token.
 - ⏰ **Konkrete Reset-Zeiten** als Timestamp-Entitäten — automationstauglich
 - 🔮 **Prognose je Fenster**: lineare Hochrechnung der aktuellen Nutzung auf das
   Fensterende (kann über 100 % gehen — zeigt, ob das Tempo das Budget sprengt)
-- 🚦 **Pace-Ampel je Fenster**: `green`/`yellow`/`red` je nach Prognose, Grenzen
-  einstellbar über **Warning Threshold** (Grün/Gelb) und **Pace Red Limit** (Gelb/Rot,
-  Default 100 %) — beides Number-Entities, live anpassbar
+- 🧭 **Zwei Prognose-Methoden**: Ø-Pace (`percent × T / t`), sobald genug des Fensters
+  verstrichen ist, davor ein Fallback über die gemessene Recent-Rate. Das Monatsfenster
+  nutzt die **tatsächliche Kalendermonatlänge** aus `resetsAt` (28/29/30/31 Tage) statt
+  nominaler 30 Tage. Forecast- und Pace-Sensoren liefern `forecast_recent`,
+  `forecast_method`, `elapsed_fraction` und `window_seconds`.
+- 🔥 **Konfigurierbarer Burn-Rate-Lookback** je Fenster (5h / Weekly / Monthly): drei
+  Slider pro Workspace bestimmen, wie weit die Burn-Rate zurückschaut (Defaults **120** /
+  **720** / **2880** min). Die Rate ist eine **OLS-Steigung** über alle Samples im
+  Lookback und liefert `lookback_minutes`, `samples` und `lookback_too_short`. Ein
+  **Reset Burn Lookbacks**-Button stellt genau diese drei Defaults wieder her.
+- 🚦 **Pace-Ampel je Fenster**: `green`/`yellow`/`red` anhand der **primären Prognose** —
+  Ø-Pace, sobald die Mindest-Einschaltzeit (max(15 min, 1 % des Fensters)) verstrichen ist,
+  davor der Fallback über die Recent-Rate. Grenzen einstellbar über **Warning Threshold**
+  (Grün/Gelb) und **Pace Red Limit** (Gelb/Rot, Default 100 %) — beides Number-Entities,
+  live anpassbar
 - 🚦 **Rate-Limit-Warnung** als Binary Sensor je Fenster + **Abo-Status** als eigener
   Binary Sensor (403 „EntitlementError" = kein aktives Abo, klar von einem
   Rate-Limit/Netzfehler unterschieden)
@@ -169,10 +181,19 @@ Die Konto-Entry ist eine eigene Integrations-Instanz und wird automatisch verwal
   - `number.go_gauge_pace_red_limit_<workspace>` — Pace Red Limit in %, Default **100**
   - `number.go_gauge_usage_refresh_min_<workspace>` — Usage-Refresh-Intervall in Minuten,
     Default **10**
+  - `number.<device>_burn_lookback_5h_minutes` — Burn-Rate-Lookback fürs
+    5h-Fenster (**15–300 min**, Default **120**, Slider)
+  - `number.<device>_burn_lookback_week_minutes` — wöchentlicher Burn-Lookback
+    (**60–10080 min**, Default **720**, Slider)
+  - `number.<device>_burn_lookback_month_minutes` — monatlicher Burn-Lookback
+    (**60–10080 min**, Default **2880**, Slider)
+  - `button.<device>_reset_burn_lookbacks` — setzt **nur** die drei Burn-Lookbacks auf
+    ihre Defaults zurück (keine Sample-Historie, keine Schwellen, kein Refresh-Intervall)
   - `switch.go_gauge_<workspace>_auto_update_usage` — Auto-Refresh Nutzung ein/aus
 
-Die Konto-Einstellungen wirken auf alle Workspaces gemeinsam; Warnschwelle, Pace-Rot-Grenze
-und Usage-Intervall gelten jeweils nur für ihren Workspace.
+Die Konto-Einstellungen wirken auf alle Workspaces gemeinsam; Warnschwelle,
+Pace-Rot-Grenze, Usage-Intervall und die drei Burn-Lookbacks gelten jeweils nur für ihren
+Workspace.
 
 ## Dashboards
 
@@ -205,11 +226,11 @@ Konto-Gerät; bei einem Upgrade behalten bestehende Installationen ihre bisherig
 | `sensor.go_gauge_team_weekly_usage` | 73 (%) |
 | `sensor.go_gauge_team_monthly_usage` | 0 (%) — bei fehlendem Abo `unknown`, Ursache in `status`/`note` |
 | `sensor.go_gauge_team_monthly_reset` | `2026-09-17T08:38:28+00:00` (Timestamp) |
-| `sensor.go_gauge_team_weekly_forecast` | z. B. 92.4 (%) — Hochrechnung aufs Fensterende, kann >100 sein |
-| `sensor.go_gauge_team_weekly_pace` | `green` / `yellow` / `red` — Attribute: forecast_percent, green_below, red_above |
+| `sensor.go_gauge_team_weekly_forecast` | z. B. 92.4 (%) — Hochrechnung aufs Fensterende, kann >100 sein. Attribute: `forecast_recent`, `forecast_method` (`pace`/`recent`/`zero`/`unavailable`), `elapsed_fraction`, `window_seconds` |
+| `sensor.go_gauge_team_weekly_pace` | `green` / `yellow` / `red` — folgt der **primären Prognose** (Ø-Pace / Recent-Rate-Fallback). Attribute: forecast_percent, forecast_recent, forecast_method, elapsed_fraction, window_seconds, green_below, red_above |
 | `sensor.go_gauge_team_weekly_remaining` | 27 (%) — Restbudget = 100 − Nutzung |
 | `sensor.go_gauge_team_weekly_time_to_reset` | z. B. `62.5` (h) — Restzeit bis zum Fenster-Reset |
-| `sensor.go_gauge_team_weekly_burn_rate` | z. B. `4.2` (%/h) — Verbrauchstempo der letzten 2 h |
+| `sensor.go_gauge_team_weekly_burn_rate` | z. B. `4.2` (%/h) — OLS-Verbrauchstempo über den konfigurierten Lookback. Attribute: `lookback_minutes`, `samples`, `lookback_too_short` |
 | `binary_sensor.go_gauge_team_weekly_rate_limited` | ON = für dieses Fenster rate-limited |
 | `binary_sensor.go_gauge_team_subscription_active` | ON = aktives Abo, OFF + `note` = kein Abo |
 | `sensor.go_gauge_team_api_status` | `ok` / `no_subscription` / `rate_limited` / `auth_error` / `api_error` / `unknown` — **nennt die Ursache**, wenn keine Daten kommen. Attribute: `raw_status`, `note` (Rohursache inkl. URL/Statuscode) |
@@ -217,6 +238,10 @@ Konto-Gerät; bei einem Upgrade behalten bestehende Installationen ihre bisherig
 | `number.go_gauge_warning_threshold_team` | Warning Threshold in % (Default 80) — zugleich Grün/Gelb-Grenze der Pace-Ampel |
 | `number.go_gauge_pace_red_limit_team` | Pace Red Limit der Pace-Ampel in % (Default 100) |
 | `number.go_gauge_usage_refresh_min_team` | Usage-Refresh-Intervall in Minuten |
+| `number.<device>_burn_lookback_5h_minutes` | Burn-Rate-Lookback fürs 5h-Fenster in Minuten (15–300, Default 120, Slider; unique_id `<entry_id>_burn_lookback_5h_minutes`) |
+| `number.<device>_burn_lookback_week_minutes` | Wöchentlicher Burn-Lookback in Minuten (60–10080, Default 720, Slider; unique_id `<entry_id>_burn_lookback_week_minutes`) |
+| `number.<device>_burn_lookback_month_minutes` | Monatlicher Burn-Lookback in Minuten (60–10080, Default 2880, Slider; unique_id `<entry_id>_burn_lookback_month_minutes`) |
+| `button.<device>_reset_burn_lookbacks` | Setzt **nur** die drei Burn-Lookbacks auf ihre Defaults zurück (unique_id `<entry_id>_burn_lookback_reset`) |
 | `switch.go_gauge_team_auto_update_usage` | Auto-Refresh Nutzung ein/aus |
 | `sensor.go_gauge_models` | **Konto-Device** — 29; Attribute: `catalog_json`, `ranking_by_cost`, `account_auto_update_models`, `account_fetch_interval_minutes`, `account_models_refresh_minutes`, `account_last_models_outcome` (unique_id `account_model_catalog`) |
 | `sensor.go_gauge_live_models` | **Konto-Device** — 29 (unique_id `account_models_live_count`) |
@@ -232,6 +257,11 @@ Systemsprache können abweichen); verbindlich ist die `unique_id`. Beide
 Refresh-Buttons nutzen den Translation-Key `refresh` — die Zuordnung erfolgt über
 das Gerät („Go Gauge Konto" vs. „Go Gauge <Workspace>"), nicht über den Key.
 Bestehende Installationen behalten ihre `entity_id` auch nach dem Upgrade auf 2.0.0.
+
+Stabil ist ausschließlich die `unique_id`: `entity_id`s entstehen einmalig aus dem
+lokalisierten Namen und dem Gerätenamen (`<device>` in der Tabelle, z. B. `go_gauge_team`),
+daher hängt Home Assistant bei einem zweiten Workspace (oder jeder anderen
+Entity-ID-Kollision) `_2` an die betroffenen `entity_id`s.
 
 ### Update von 1.x
 
@@ -316,7 +346,10 @@ unverändert weiter.
 Diagnose-Export: *Einstellungen → Geräte & Dienste → Go Gauge HA → Diagnose
 herunterladen*. Der Export ist nach Entry-Art aufgeteilt (Workspace- vs. Konto-Entry) und
 enthält den Coordinator-Zustand, die Workspace-Statusliste, die Erreichbarkeits-Matrix
-sowie den letzten Adoptions-Report.
+sowie den letzten Adoptions-Report. Ein Workspace-Export enthält zusätzlich einen
+`burn`-Block: konfigurierter Lookback je Fenster und seine effektive Länge in Sekunden,
+die Sample-Anzahl innerhalb des Lookbacks, `lookback_too_short`, `forecast_method` und
+`elapsed_fraction` je Workspace/Fenster.
 
 - Der Token wird per `async_redact_data` entfernt; sichtbar bleibt nur ein maskierter
   Fingerprint (erste 8 Zeichen eines SHA-256-Hashes) zur Zuordnung.
