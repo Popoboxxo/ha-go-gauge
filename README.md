@@ -33,9 +33,21 @@ workspace API token.
 - ⏰ **Concrete reset times** as timestamp entities — automation-friendly
 - 🔮 **Forecast per window**: linear projection of current usage to the end of the window
   (can exceed 100 % — shows whether the pace will blow the budget)
-- 🚦 **Pace traffic light per window**: `green`/`yellow`/`red` based on the forecast,
-  thresholds adjustable via **Warning Threshold** (green/yellow) and **Pace Red Limit**
-  (yellow/red, default 100 %) — both are number entities, adjustable live
+- 🧭 **Two forecast methods**: Ø-pace (`percent × T / t`) once enough of the window has
+  elapsed, a recent burn-rate fallback before that. The monthly window uses the **real
+  calendar-month length** from `resetsAt` (28/29/30/31 days) instead of a nominal 30
+  days. Forecast and pace sensors expose `forecast_recent`, `forecast_method`,
+  `elapsed_fraction` and `window_seconds`.
+- 🔥 **Configurable burn-rate lookback** per window (5h / weekly / monthly): three
+  sliders per workspace choose how far back the burn rate looks (defaults **120** /
+  **720** / **2880** min). The rate is an **OLS slope** over all samples inside the
+  lookback and exposes `lookback_minutes`, `samples` and `lookback_too_short`. A
+  **Reset Burn Lookbacks** button restores exactly those three defaults.
+- 🚦 **Pace traffic light per window**: `green`/`yellow`/`red` based on the **primary
+  forecast** — Ø-pace once the minimum elapsed time (max(15 min, 1 % of the window)) has
+  passed, the recent-rate fallback before that. Thresholds are adjustable via **Warning
+  Threshold** (green/yellow) and **Pace Red Limit** (yellow/red, default 100 %) — both are
+  number entities, adjustable live
 - 🚦 **Rate-limit warning** as a binary sensor per window plus **subscription status** as
   its own binary sensor (403 "EntitlementError" = no active subscription, clearly
   distinguished from a rate limit/network error)
@@ -166,10 +178,18 @@ The account entry is its own integration instance and is managed automatically:
   - `number.go_gauge_pace_red_limit_<workspace>` — pace red limit in %, default **100**
   - `number.go_gauge_usage_refresh_min_<workspace>` — usage refresh interval in minutes,
     default **10**
+  - `number.<device>_burn_lookback_5h_minutes` — burn-rate lookback for the 5h
+    window (**15–300 min**, default **120**, slider)
+  - `number.<device>_burn_lookback_week_minutes` — weekly burn lookback
+    (**60–10080 min**, default **720**, slider)
+  - `number.<device>_burn_lookback_month_minutes` — monthly burn lookback
+    (**60–10080 min**, default **2880**, slider)
+  - `button.<device>_reset_burn_lookbacks` — resets **only** the three burn lookbacks to
+    their defaults (no sample history, no thresholds, no refresh interval)
   - `switch.go_gauge_<workspace>_auto_update_usage` — auto-refresh usage on/off
 
-The account settings affect all workspaces together; warning threshold, pace red limit and
-usage interval apply only to their own workspace.
+The account settings affect all workspaces together; warning threshold, pace red limit,
+usage interval and the three burn lookbacks apply only to their own workspace.
 
 ## Dashboards
 
@@ -202,11 +222,11 @@ existing installations keep their previous `entity_id`. The `unique_id` is autho
 | `sensor.go_gauge_team_weekly_usage` | 73 (%) |
 | `sensor.go_gauge_team_monthly_usage` | 0 (%) — without subscription `unknown`, cause in `status`/`note` |
 | `sensor.go_gauge_team_monthly_reset` | `2026-09-17T08:38:28+00:00` (timestamp) |
-| `sensor.go_gauge_team_weekly_forecast` | e.g. 92.4 (%) — projection to the end of the window, can exceed 100 |
-| `sensor.go_gauge_team_weekly_pace` | `green` / `yellow` / `red` — attributes: forecast_percent, green_below, red_above |
+| `sensor.go_gauge_team_weekly_forecast` | e.g. 92.4 (%) — projection to the end of the window, can exceed 100. Attributes: `forecast_recent`, `forecast_method` (`pace`/`recent`/`zero`/`unavailable`), `elapsed_fraction`, `window_seconds` |
+| `sensor.go_gauge_team_weekly_pace` | `green` / `yellow` / `red` — follows the **primary forecast** (Ø-pace / recent-rate fallback). Attributes: forecast_percent, forecast_recent, forecast_method, elapsed_fraction, window_seconds, green_below, red_above |
 | `sensor.go_gauge_team_weekly_remaining` | 27 (%) — remaining budget = 100 − usage |
 | `sensor.go_gauge_team_weekly_time_to_reset` | e.g. `62.5` (h) — time until the window reset |
-| `sensor.go_gauge_team_weekly_burn_rate` | e.g. `4.2` (%/h) — consumption rate over the last 2 h |
+| `sensor.go_gauge_team_weekly_burn_rate` | e.g. `4.2` (%/h) — OLS consumption rate over the configured lookback. Attributes: `lookback_minutes`, `samples`, `lookback_too_short` |
 | `binary_sensor.go_gauge_team_weekly_rate_limited` | ON = rate-limited for this window |
 | `binary_sensor.go_gauge_team_subscription_active` | ON = active subscription, OFF + `note` = no subscription |
 | `sensor.go_gauge_team_api_status` | `ok` / `no_subscription` / `rate_limited` / `auth_error` / `api_error` / `unknown` — **names the cause** when no data arrives. Attributes: `raw_status`, `note` (raw cause incl. URL/status code) |
@@ -214,6 +234,10 @@ existing installations keep their previous `entity_id`. The `unique_id` is autho
 | `number.go_gauge_warning_threshold_team` | Warning threshold in % (default 80) — also the green/yellow boundary of the pace traffic light |
 | `number.go_gauge_pace_red_limit_team` | Pace red limit of the pace traffic light in % (default 100) |
 | `number.go_gauge_usage_refresh_min_team` | Usage refresh interval in minutes |
+| `number.<device>_burn_lookback_5h_minutes` | Burn-rate lookback for the 5h window in minutes (15–300, default 120, slider; unique_id `<entry_id>_burn_lookback_5h_minutes`) |
+| `number.<device>_burn_lookback_week_minutes` | Weekly burn lookback in minutes (60–10080, default 720, slider; unique_id `<entry_id>_burn_lookback_week_minutes`) |
+| `number.<device>_burn_lookback_month_minutes` | Monthly burn lookback in minutes (60–10080, default 2880, slider; unique_id `<entry_id>_burn_lookback_month_minutes`) |
+| `button.<device>_reset_burn_lookbacks` | Resets **only** the three burn lookbacks to their defaults (unique_id `<entry_id>_burn_lookback_reset`) |
 | `switch.go_gauge_team_auto_update_usage` | Auto-refresh usage on/off |
 | `sensor.go_gauge_models` | **Account device** — 29; attributes: `catalog_json`, `ranking_by_cost`, `account_auto_update_models`, `account_fetch_interval_minutes`, `account_models_refresh_minutes`, `account_last_models_outcome` (unique_id `account_model_catalog`) |
 | `sensor.go_gauge_live_models` | **Account device** — 29 (unique_id `account_models_live_count`) |
@@ -229,6 +253,10 @@ system language may differ); the `unique_id` is authoritative. Both refresh butt
 translation key `refresh` — the mapping happens via the device ("Go Gauge Konto" vs.
 "Go Gauge <workspace>"), not via the key. Existing installations keep their `entity_id`
 even after upgrading to 2.0.0.
+
+Only the `unique_id` is stable: `entity_id`s are derived once from the localized name and
+the device name (`<device>` in the table, e.g. `go_gauge_team`), so a second workspace (or
+any entity-ID collision) makes Home Assistant append `_2` to the affected `entity_id`s.
 
 ### Upgrading from 1.x
 
@@ -311,7 +339,9 @@ change or HA restart). The workspace entities and the usage fetch keep running u
 Diagnostics export: *Settings → Devices & Services → Go Gauge HA → Download diagnostics*.
 The export is split by entry kind (workspace vs. account entry) and contains the
 coordinator state, the workspace status list, the reachability matrix and the last adoption
-report.
+report. A workspace export also carries a `burn` block: the configured lookback per window
+and its effective length in seconds, the sample count inside the lookback,
+`lookback_too_short`, `forecast_method` and `elapsed_fraction` per workspace/window.
 
 - The token is removed via `async_redact_data`; only a masked fingerprint (first 8
   characters of a SHA-256 hash) remains for correlation.

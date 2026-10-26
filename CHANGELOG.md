@@ -1,5 +1,58 @@
 # Changelog
 
+## [2.1.0] — 2026-10-26
+
+### Summary
+
+Der Burn-Rate-Lookback ist nicht mehr fest verdrahtet: drei Slider pro Workspace
+konfigurieren ihn je Fenster, ein Reset-Button stellt die Defaults wieder her. Die
+Burn-Rate rechnet jetzt als OLS-Regression über alle Samples im Lookback, die Prognose
+wählt zwischen Ø-Pace und einem Recent-Rate-Fallback, und das Monatsfenster nutzt die
+echte Kalendermonatlänge aus `resetsAt`.
+
+### ✨ New features
+
+- Drei Burn-Lookback-Slider pro Workspace (`EntityCategory.CONFIG`,
+  `NumberMode.SLIDER`, Einheit Minuten, live wirksam und als Options persistiert):
+  - **5h Burn Lookback** — 15–300 min, Default **120**, Schritt 5
+  - **Weekly Burn Lookback** — 60–10080 min, Default **720**, Schritt 60
+  - **Monthly Burn Lookback** — 60–10080 min, Default **2880**, Schritt 60
+- Neuer Button **Reset Burn Lookbacks** pro Workspace (`EntityCategory.DIAGNOSTIC`,
+  `mdi:restore`): setzt ausschließlich die drei Lookbacks auf ihre Defaults zurück —
+  keine Sample-Historie, keine Schwellen, kein Refresh-Intervall.
+- Options-Flow: die drei Lookbacks als Zahlenfelder mit Range-Validierung; der bisher
+  fehlende String für `pace_red_percent` ist ergänzt (kein Roh-Key mehr im UI).
+- Burn-Rate als **OLS-Steigung mit Achsenabschnitt** über alle Samples im konfigurierten
+  Lookback (mindestens 2 Samples und eine Mindestspanne bleiben Pflicht, negative
+  Steigung ergibt `unknown`). Attribute: `lookback_minutes`, `samples`,
+  `lookback_too_short`.
+- Prognose mit **zwei Methoden**: Ø-Pace (`percent × T / t`) ab der Mindest-Einschaltzeit
+  `max(15 min, 1 % der Fensterlänge)`, davor ein Fallback über die gemessene Recent-Rate.
+  Attribute: `forecast_recent`, `forecast_method`, `elapsed_fraction`, `window_seconds`.
+  Die Pace-Ampel folgt der **primären Prognose** — Ø-Pace ab der Mindest-Einschaltzeit,
+  davor die Recent-Rate; `forecast_recent` steht daneben als Attribut.
+- Das Monatsfenster nutzt die **tatsächliche Kalendermonatlänge** aus `resetsAt`
+  (28/29/30/31 Tage) statt der nominalen 30 Tage; fehlt/ungültig `resetsAt`, bleibt die
+  Prognose `unknown` (`forecast_method: unavailable`).
+
+### 🩺 Diagnostics
+
+- Neuer `burn`-Block pro Workspace im Diagnose-Export: Lookback-Minuten und effektive
+  Lookback-Sekunden je Fenster, Sample-Counts, `lookback_too_short` sowie
+  `forecast_method` und `elapsed_fraction` je Workspace/Fenster. Nur Zähler — keine
+  Sample-Werte, keine Tokens.
+
+### 🔧 Canon
+
+- Canon-Governance gehärtet: die vier neuen Entities sind als Domain-Extensions
+  registriert und werden vom statischen Checker geprüft (`check_canon.py`: 0 Fehler /
+  0 Warnungen). Die Aktivierung als Pflicht-Entities folgt mit Canon 1.7.0.
+
+### 💥 Breaking changes
+
+Keine. Es werden keine Entities umbenannt, keine `unique_id` geändert und die
+ConfigEntry-Version bleibt **8** (kein Migrationsschritt, kein neuer Migrator).
+
 ## [2.0.4] — 2026-10-25
 
 ### 📝 Documentation
