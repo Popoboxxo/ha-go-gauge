@@ -72,6 +72,7 @@ class _WorkspaceSettingNumber(GoGaugeEntityBase, NumberEntity):
     """
 
     _attr_mode = NumberMode.BOX
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry, *,
                  unique_suffix: str,
@@ -92,6 +93,7 @@ class _AccountSettingNumber(GoGaugeAccountEntityBase, NumberEntity):
     """
 
     _attr_mode = NumberMode.BOX
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry, *,
                  unique_id: str,
@@ -183,7 +185,6 @@ class _BurnLookbackNumber(_WorkspaceSettingNumber):
     """
 
     _attr_mode = NumberMode.SLIDER
-    _attr_entity_category = EntityCategory.CONFIG
     _attr_icon = "mdi:history"
     _attr_native_unit_of_measurement = "min"
 

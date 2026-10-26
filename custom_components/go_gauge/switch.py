@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -57,6 +58,7 @@ class AutoUpdateUsageSwitch(GoGaugeEntityBase, SwitchEntity):
     """Auto-Refresh fuer Nutzungsdaten ein/aus (workspace)."""
 
     _attr_icon = "mdi:autorenew"
+    _attr_entity_category = EntityCategory.CONFIG
     _attr_translation_key = "auto_update_usage"
 
     def __init__(self, coordinator: GoGaugeCoordinator, entry: ConfigEntry) -> None:
@@ -91,6 +93,7 @@ class AccountAutoUpdateModelsSwitch(GoGaugeAccountEntityBase, SwitchEntity):
     """
 
     _attr_icon = "mdi:autorenew"
+    _attr_entity_category = EntityCategory.CONFIG
     _attr_translation_key = "auto_update_models"
 
     def __init__(self, coordinator: AccountCoordinator, entry: ConfigEntry) -> None:

@@ -259,6 +259,20 @@ def test_account_models_number_sets_base_interval_and_persists_without_reload():
     assert entity_obj.hass.config_entries.reload_calls == []
 
 
+def test_settings_and_switches_are_config_category():
+    """[Canon 1.8.0] All settings numbers and switches use EntityCategory.CONFIG."""
+    classes = (
+        number.WarnPercentNumber,
+        number.PaceRedPercentNumber,
+        number.UsageRefreshMinutesNumber,
+        number.AccountModelsRefreshMinutesNumber,
+        switch.AutoUpdateUsageSwitch,
+        switch.AccountAutoUpdateModelsSwitch,
+    )
+    for cls in classes:
+        assert cls._attr_entity_category == "config", cls.__name__
+
+
 def test_account_models_number_bounds_are_1_to_1440():
     """[PLAN2-E4] The account interval is clamped to the documented 1-1440."""
     entity_obj = number.AccountModelsRefreshMinutesNumber(_FakeAccountCoordinator(), _FakeEntry())
