@@ -555,3 +555,173 @@ if __name__ == "__main__":
     test_account_diag_hints_explain_backoff_and_missing_catalog()
     test_account_diag_error_path_has_no_token_hint()
     print("OK")
+
+
+# ---------------------------------------------------------------------------
+# Burn-lookback debug block (2.1.0, plan D14)
+# ---------------------------------------------------------------------------
+
+class _BurnWorkspaceCoordinator(_FakeWorkspaceCoordinator):
+    """Workspace coordinator double with the 2.1.0 burn helpers."""
+
+    def __init__(self, data, *, lookbacks=None, burn=None, forecast=None):
+        super().__init__(data)
+        self.burn_lookback_minutes = (
+            {"5h": 120, "week": 720, "month": 2880}
+            if lookbacks is None
+            else lookbacks
+        )
+        self._burn = dict(burn or {})
+        self._forecast = dict(forecast or {})
+
+    def burn_rate_diagnostics(self, key, window):
+        return self._burn.get((key, window), {})
+
+    def forecast_details(self, key, window):
+        return self._forecast.get((key, window), {})
+
+
+def _burn_workspace_data():
+    """Workspace snapshot with one workspace and all three windows."""
+    windows = {
+        win: {"percent": 42.0, "resets_at": "2026-10-26T17:00:00+00:00"}
+        for win in ("5h", "week", "month")
+    }
+    return _workspace_data(workspaces=[{
+        "key": "ws1",
+        "status": "ok",
+        "note": "",
+        "windows": windows,
+    }])
+
+
+def test_workspace_diag_has_burn_block_with_lookbacks_and_counts():
+    """[REQ-020] ``burn`` explains lookback, sample counts and forecast method."""
+    burn = {
+        ("ws1", "5h"): {
+            "lookback_minutes": 120,
+            "samples": 7,
+            "lookback_seconds": 7200,
+            "lookback_too_short": False,
+        },
+        ("ws1", "week"): {
+            "lookback_minutes": 720,
+            "samples": 70,
+            "lookback_seconds": 43200,
+            "lookback_too_short": False,
+        },
+        ("ws1", "month"): {
+            "lookback_minutes": 2880,
+            "samples": 0,
+            "lookback_seconds": 172800,
+            "lookback_too_short": False,
+        },
+    }
+    forecast = {
+        ("ws1", "5h"): {"forecast_method": "pace", "elapsed_fraction": 0.4},
+        ("ws1", "week"): {"forecast_method": "recent", "elapsed_fraction": 0.01},
+        ("ws1", "month"): {"forecast_method": "unavailable", "elapsed_fraction": None},
+    }
+    coordinator = _BurnWorkspaceCoordinator(
+        _burn_workspace_data(), burn=burn, forecast=forecast
+    )
+    entry = _workspace_entry()
+    hass = _FakeHass({entry.entry_id: coordinator})
+
+    result = _run(hass, entry)
+
+    block = result["burn"]
+    assert block["burn_lookback_minutes"] == {"5h": 120, "week": 720, "month": 2880}
+    assert block["lookback_seconds"] == {"5h": 7200, "week": 43200, "month": 172800}
+
+    workspace = block["workspaces"]["ws1"]
+    assert workspace["samples"] == {"5h": 7, "week": 70, "month": 0}
+    assert workspace["lookback_too_short"] == {
+        "5h": False,
+        "week": False,
+        "month": False,
+    }
+    assert workspace["forecast_method"] == {
+        "5h": "pace",
+        "week": "recent",
+        "month": "unavailable",
+    }
+    assert workspace["elapsed_fraction"] == {
+        "5h": 0.4,
+        "week": 0.01,
+        "month": None,
+    }
+
+
+def test_workspace_diag_burn_block_uses_persisted_custom_lookbacks():
+    """[REQ-020] The export reflects the live (slider) values, not the defaults."""
+    coordinator = _BurnWorkspaceCoordinator(
+        _burn_workspace_data(),
+        lookbacks={"5h": 300, "week": 1440, "month": 5760},
+    )
+    entry = _workspace_entry()
+    hass = _FakeHass({entry.entry_id: coordinator})
+
+    result = _run(hass, entry)
+
+    assert result["burn"]["burn_lookback_minutes"] == {
+        "5h": 300,
+        "week": 1440,
+        "month": 5760,
+    }
+    assert result["burn"]["lookback_seconds"] == {
+        "5h": 18000,
+        "week": 86400,
+        "month": 345600,
+    }
+
+
+def test_workspace_diag_burn_block_is_defensive_for_a_legacy_coordinator():
+    """[REQ-020] A 2.0.x coordinator without the burn methods must not raise."""
+    coordinator = _FakeWorkspaceCoordinator(_burn_workspace_data())
+    entry = _workspace_entry()
+    hass = _FakeHass({entry.entry_id: coordinator})
+
+    result = _run(hass, entry)
+
+    block = result["burn"]
+    # No live lookbacks -> the documented defaults are reported.
+    assert block["burn_lookback_minutes"] == {"5h": 120, "week": 720, "month": 2880}
+    assert block["lookback_seconds"] == {"5h": 7200, "week": 43200, "month": 172800}
+    # No helper methods -> empty per-window maps instead of invented values.
+    assert block["workspaces"]["ws1"] == {
+        "samples": {},
+        "lookback_too_short": {},
+        "forecast_method": {},
+        "elapsed_fraction": {},
+    }
+
+
+def test_workspace_diag_burn_block_tolerates_a_garbage_lookback_value():
+    """[REQ-020] A non-numeric lookback renders as None, not a crash."""
+    coordinator = _BurnWorkspaceCoordinator(
+        _burn_workspace_data(), lookbacks={"5h": "abc"}
+    )
+    entry = _workspace_entry()
+    hass = _FakeHass({entry.entry_id: coordinator})
+
+    result = _run(hass, entry)
+
+    assert result["burn"]["burn_lookback_minutes"]["5h"] is None
+    assert result["burn"]["lookback_seconds"]["5h"] is None
+    # Untouched windows still fall back to their defaults.
+    assert result["burn"]["burn_lookback_minutes"]["week"] == 720
+
+
+def test_workspace_diag_burn_block_never_leaks_the_token():
+    """[REQ-020] The burn debug block contains counts/methods only - no secret."""
+    coordinator = _BurnWorkspaceCoordinator(_burn_workspace_data())
+    entry = _workspace_entry()
+    hass = _FakeHass({entry.entry_id: coordinator})
+
+    result = _run(hass, entry)
+
+    dumped = repr(result["burn"])
+    assert TOKEN not in dumped
+    assert TOKEN[:8] not in dumped
+    assert "token" not in dumped.lower()

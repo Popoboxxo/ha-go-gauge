@@ -72,6 +72,7 @@ class _FakeDataUpdateCoordinator:
 
 class _NumberModeStub:
     BOX = "box"
+    SLIDER = "slider"
 
 
 sys.modules["homeassistant.components.number"].NumberMode = _NumberModeStub

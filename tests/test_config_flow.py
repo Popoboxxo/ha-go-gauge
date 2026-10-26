@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import voluptuous as vol
 
 try:  # pytest prepends the tests dir to sys.path, so `import conftest` works
     import conftest
@@ -270,22 +271,19 @@ class TestWorkspaceOptionsFlow:
 
     ``auto_update_models`` / ``models_refresh_minutes`` moved to the account
     entry in 2.0.0 (plan §6.1): a workspace performs no catalog fetch, so those
-    controls would change nothing. Everything else about the workspace options
-    stays untouched.
+    controls would change nothing. Since 2.1.0 the same form also carries the
+    three validated burn-lookback minutes fields (plan D13).
     """
 
     @pytest.mark.asyncio
     async def test_workspace_options_flow_has_no_model_fields(self):
-        """[PLAN2-E4] Schema keeps the usage options, drops both model fields."""
-        from unittest.mock import MagicMock
+        """[PLAN2-E4] Schema keeps the usage options, drops both model fields.
 
-        entry = conftest.StrictConfigEntry(
-            entry_id="ws-entry",
-            data={"workspace_name": "WS", "token": "tok"},
-        )
-        flow = config_flow.GoGaugeOptionsFlowHandler(entry)
-        flow.hass = MagicMock()
-        flow.async_show_form = MagicMock(return_value={"type": "form"})
+        Since 2.1.0 the workspace options additionally carry the three
+        burn-lookback minutes fields (plan D13); the model keys stay gone
+        (they moved to the account entry in 2.0.0).
+        """
+        flow = _workspace_options_flow()
 
         result = await flow.async_step_init(None)
 
@@ -301,7 +299,93 @@ class TestWorkspaceOptionsFlow:
             "pace_red_percent",
             "auto_update_usage",
             "usage_refresh_minutes",
+            "burn_lookback_5h_minutes",
+            "burn_lookback_week_minutes",
+            "burn_lookback_month_minutes",
         }
+
+    @pytest.mark.asyncio
+    async def test_workspace_options_flow_accepts_valid_lookbacks(self):
+        """[PLAN2-E4] A fully populated, in-range submission validates."""
+        schema = await _workspace_form_schema()
+
+        assert schema(dict(VALID_OPTIONS)) == VALID_OPTIONS
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("burn_lookback_5h_minutes", 5),      # below the 15 min minimum
+            ("burn_lookback_5h_minutes", 20000),  # above the 300 min maximum
+            ("burn_lookback_week_minutes", 10081),   # above 10080
+            ("burn_lookback_month_minutes", 10081),  # above 10080
+            ("burn_lookback_week_minutes", 59),   # below the 60 min minimum
+        ],
+    )
+    async def test_workspace_options_flow_rejects_out_of_range_lookbacks(
+        self, key, value
+    ):
+        """[PLAN2-E4] Each lookback field enforces its min/max range (D13)."""
+        schema = await _workspace_form_schema()
+
+        with pytest.raises(vol.Invalid):
+            schema({**VALID_OPTIONS, key: value})
+
+    @pytest.mark.asyncio
+    async def test_workspace_options_flow_lookback_defaults_are_120_720_2880(self):
+        """[PLAN2-E4] Missing options prefill the documented defaults (D6)."""
+        schema = await _workspace_form_schema()
+
+        defaults = {str(marker): marker.default() for marker in schema.schema}
+        assert defaults["burn_lookback_5h_minutes"] == 120
+        assert defaults["burn_lookback_week_minutes"] == 720
+        assert defaults["burn_lookback_month_minutes"] == 2880
+
+    @pytest.mark.asyncio
+    async def test_workspace_options_flow_keeps_a_persisted_lookback(self):
+        """[PLAN2-E4] A persisted value wins over the default (only that one)."""
+        schema = await _workspace_form_schema(
+            options={"burn_lookback_week_minutes": 300}
+        )
+
+        defaults = {str(marker): marker.default() for marker in schema.schema}
+        assert defaults["burn_lookback_5h_minutes"] == 120
+        assert defaults["burn_lookback_week_minutes"] == 300
+        assert defaults["burn_lookback_month_minutes"] == 2880
+
+
+VALID_OPTIONS = {
+    "workspace_name": "My Workspace",
+    "warn_percent": 80,
+    "pace_red_percent": 100,
+    "auto_update_usage": True,
+    "usage_refresh_minutes": 10,
+    "burn_lookback_5h_minutes": 120,
+    "burn_lookback_week_minutes": 720,
+    "burn_lookback_month_minutes": 2880,
+}
+
+
+def _workspace_options_flow(options=None):
+    """Build the real options-flow handler with HA plumbing doubled."""
+    from unittest.mock import MagicMock
+
+    entry = conftest.StrictConfigEntry(
+        entry_id="ws-entry",
+        data={"workspace_name": "WS", "token": "tok"},
+        options=options,
+    )
+    flow = config_flow.GoGaugeOptionsFlowHandler(entry)
+    flow.hass = MagicMock()
+    flow.async_show_form = MagicMock(return_value={"type": "form"})
+    return flow
+
+
+async def _workspace_form_schema(options=None):
+    """Render the options form once and return its voluptuous schema."""
+    flow = _workspace_options_flow(options)
+    await flow.async_step_init(None)
+    return flow.async_show_form.call_args.kwargs["data_schema"]
 
 
 class TestUserFlowEntryKind:

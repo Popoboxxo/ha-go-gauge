@@ -46,8 +46,27 @@ import sys
 import types
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Iterator
 from unittest.mock import MagicMock
+
+# --- `go_gauge` package shim (2.1.0 review follow-up, plan §9) --------------
+# Every test module loads the integration files standalone via
+# ``importlib.util.spec_from_file_location("go_gauge.<name>", ...)`` and
+# registers the SUBmodule in ``sys.modules`` - never the parent package. The
+# production code uses relative imports (``from . import burn_lookback``,
+# ``from .const import ...``), which need a package object with a ``__path__``.
+# ``coordinator.py`` currently carries a fallback for that (kept until this
+# shim is proven); registering a real package module here makes the relative
+# imports resolve for the whole suite. Idempotent: an already-registered
+# package (e.g. from a real import) is reused, only ``__path__`` is pointed at
+# the integration directory.
+GO_GAUGE_PACKAGE_PATH = (
+    Path(__file__).resolve().parent.parent / "custom_components" / "go_gauge"
+)
+_go_gauge_package = sys.modules.get("go_gauge") or types.ModuleType("go_gauge")
+_go_gauge_package.__path__ = [str(GO_GAUGE_PACKAGE_PATH)]
+sys.modules.setdefault("go_gauge", _go_gauge_package)
 
 
 class _Flexible(types.ModuleType):
@@ -153,6 +172,49 @@ def _identity_callback(func: object) -> object:
     return func
 
 
+class _EnumLikeMeta(type):
+    """Metaclass giving :class:`_EnumLike` a permissive attribute fallback.
+
+    A plain ``__getattr__`` on the class only fires for *instances*; entity
+    class bodies read enum members on the CLASS (``EntityCategory.CONFIG`` at
+    import time), which needs the lookup hook on the metaclass.
+    """
+
+    def __getattr__(cls, name: str) -> str:
+        """Return the lower-cased member name for anything not pinned."""
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return name.lower()
+
+
+class _EnumLike(metaclass=_EnumLikeMeta):
+    """Stand-in for a real HA ``StrEnum`` used at class-body time.
+
+    The integration reads enum members while defining entity classes
+    (``_attr_entity_category = EntityCategory.CONFIG``,
+    ``_attr_mode = NumberMode.SLIDER``), so a throwaway class from
+    ``_Flexible`` would raise ``AttributeError`` during *collection*. The
+    pinned members carry the real HA string values; the metaclass fallback
+    keeps any future member usable instead of crashing the import.
+    """
+
+
+class _EntityCategory(_EnumLike):
+    """``homeassistant.const.EntityCategory`` with the real string values."""
+
+    CONFIG = "config"
+    DIAGNOSTIC = "diagnostic"
+    SYSTEM = "system"
+
+
+class _NumberMode(_EnumLike):
+    """``homeassistant.components.number.NumberMode`` (``box``/``slider``)."""
+
+    AUTO = "auto"
+    BOX = "box"
+    SLIDER = "slider"
+
+
 class _ClientTimeout:
     """Minimal stand-in for ``aiohttp.ClientTimeout``."""
 
@@ -203,6 +265,14 @@ def install_ha_stubs() -> None:
     # `class X(ConfigFlow, domain=...)` works, and an identity `callback`.
     sys.modules["homeassistant.config_entries"].ConfigFlow = _FakeConfigFlow
     sys.modules["homeassistant.core"].callback = _identity_callback
+
+    # Enum members read at CLASS-BODY time (entity definitions import before any
+    # test runs): `EntityCategory.CONFIG` in number.py, `EntityCategory.DIAGNOSTIC`
+    # in button.py and `NumberMode.SLIDER` in number.py (2.1.0 burn lookbacks).
+    # A `_Flexible` throwaway class raises AttributeError here, which aborts
+    # collection of the whole file - hence real, pinned enum stand-ins.
+    sys.modules["homeassistant.const"].EntityCategory = _EntityCategory
+    sys.modules["homeassistant.components.number"].NumberMode = _NumberMode
 
     # Flow context sources are plain strings in real HA. `account.py` passes
     # `context={"source": SOURCE_IMPORT}` to the import flow; a `_Flexible`

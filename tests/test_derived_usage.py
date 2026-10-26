@@ -272,11 +272,21 @@ def _bare_coordinator() -> "coord.GoGaugeCoordinator":
     return c
 
 
+RESETS_AT = datetime(2026, 9, 7, 17, 0, 0, tzinfo=timezone.utc)
+
+
 def test_record_usage_sample_appends_numeric_percent():
-    """[REQ-015] a numeric percent is stored as one (ts, percent) sample."""
+    """[REQ-015] a numeric percent is stored as one (ts, percent, resets_at)."""
     c = _bare_coordinator()
     c._record_usage_sample("ws1", "5h", 42.5, NOW)
-    assert c._usage_samples == {"ws1:5h": [(NOW, 42.5)]}
+    assert c._usage_samples == {"ws1:5h": [(NOW, 42.5, None)]}
+
+
+def test_record_usage_sample_stores_the_resets_at_marker():
+    """[REQ-015] the third tuple element is the sample's ``resets_at`` (D10)."""
+    c = _bare_coordinator()
+    c._record_usage_sample("ws1", "5h", 42.5, NOW, RESETS_AT)
+    assert c._usage_samples["ws1:5h"] == [(NOW, 42.5, RESETS_AT)]
 
 
 def test_record_usage_sample_keeps_key_per_workspace_window():
@@ -286,56 +296,96 @@ def test_record_usage_sample_keeps_key_per_workspace_window():
     c._record_usage_sample("ws1", "week", 20.0, NOW)
     c._record_usage_sample("ws2", "5h", 30.0, NOW)
     assert set(c._usage_samples) == {"ws1:5h", "ws1:week", "ws2:5h"}
-    assert c._usage_samples["ws1:5h"] == [(NOW, 10.0)]
-    assert c._usage_samples["ws1:week"] == [(NOW, 20.0)]
-    assert c._usage_samples["ws2:5h"] == [(NOW, 30.0)]
+    assert c._usage_samples["ws1:5h"] == [(NOW, 10.0, None)]
+    assert c._usage_samples["ws1:week"] == [(NOW, 20.0, None)]
+    assert c._usage_samples["ws2:5h"] == [(NOW, 30.0, None)]
 
 
 def test_record_usage_sample_clears_history_on_percent_drop():
     """[REQ-015] a percent drop (window reset) clears prior history first."""
     c = _bare_coordinator()
-    c._record_usage_sample("ws1", "5h", 50.0, NOW - timedelta(minutes=10))
-    c._record_usage_sample("ws1", "5h", 20.0, NOW)
-    assert c._usage_samples["ws1:5h"] == [(NOW, 20.0)]
+    c._record_usage_sample("ws1", "5h", 50.0, NOW - timedelta(minutes=10), RESETS_AT)
+    c._record_usage_sample("ws1", "5h", 20.0, NOW, RESETS_AT)
+    assert c._usage_samples["ws1:5h"] == [(NOW, 20.0, RESETS_AT)]
+
+
+def test_record_usage_sample_clears_history_on_resets_at_change():
+    """[REQ-015] a rollover with an unchanged percent still clears (D10)."""
+    c = _bare_coordinator()
+    c._record_usage_sample("ws1", "5h", 100.0, NOW - timedelta(minutes=10), RESETS_AT)
+    c._record_usage_sample(
+        "ws1", "5h", 100.0, NOW, RESETS_AT + timedelta(hours=5)
+    )
+    assert c._usage_samples["ws1:5h"] == [
+        (NOW, 100.0, RESETS_AT + timedelta(hours=5))
+    ]
 
 
 def test_record_usage_sample_keeps_history_on_equal_percent():
-    """[REQ-015] an unchanged percent is not a drop - both samples stay."""
+    """[REQ-015] unchanged percent + resets_at is not a drop - both stay."""
     c = _bare_coordinator()
     earlier = NOW - timedelta(minutes=10)
-    c._record_usage_sample("ws1", "5h", 50.0, earlier)
-    c._record_usage_sample("ws1", "5h", 50.0, NOW)
-    assert c._usage_samples["ws1:5h"] == [(earlier, 50.0), (NOW, 50.0)]
+    c._record_usage_sample("ws1", "5h", 50.0, earlier, RESETS_AT)
+    c._record_usage_sample("ws1", "5h", 50.0, NOW, RESETS_AT)
+    assert c._usage_samples["ws1:5h"] == [
+        (earlier, 50.0, RESETS_AT),
+        (NOW, 50.0, RESETS_AT),
+    ]
 
 
-def test_record_usage_sample_prunes_beyond_lookback():
-    """[REQ-015] a sample older than the lookback is dropped; the rest stays."""
+def test_record_usage_sample_prunes_beyond_retention():
+    """[REQ-015] 5h retention is its own slider maximum (18000 s), not 7 d (D9)."""
     c = _bare_coordinator()
-    stale = NOW - timedelta(seconds=coord.BURN_RATE_LOOKBACK_SECONDS + 1)
+    stale = NOW - timedelta(seconds=coord.bl.retention_seconds("5h") + 1)
     c._record_usage_sample("ws1", "5h", 10.0, stale)
     c._record_usage_sample("ws1", "5h", 20.0, NOW)
-    assert c._usage_samples["ws1:5h"] == [(NOW, 20.0)]
+    assert c._usage_samples["ws1:5h"] == [(NOW, 20.0, None)]
 
 
-def test_record_usage_sample_keeps_sample_exactly_at_lookback_edge():
-    """[REQ-015] the lookback prune boundary is inclusive (>= cutoff)."""
+def test_record_usage_sample_keeps_sample_exactly_at_retention_edge():
+    """[REQ-015] the per-window retention boundary is inclusive (>= cutoff)."""
     c = _bare_coordinator()
-    edge = NOW - timedelta(seconds=coord.BURN_RATE_LOOKBACK_SECONDS)
+    edge = NOW - timedelta(seconds=coord.bl.retention_seconds("5h"))
     c._record_usage_sample("ws1", "5h", 10.0, edge)
     c._record_usage_sample("ws1", "5h", 20.0, NOW)
-    assert c._usage_samples["ws1:5h"] == [(edge, 10.0), (NOW, 20.0)]
+    assert c._usage_samples["ws1:5h"] == [(edge, 10.0, None), (NOW, 20.0, None)]
 
 
-def test_record_usage_sample_caps_history_at_64_entries():
-    """[REQ-015] only the newest 64 samples are retained."""
+def test_record_usage_sample_retention_is_per_window():
+    """[REQ-015] A 2-day-old sample is pruned for 5h but kept for week/month.
+
+    Plan §9 item 3: the 5h history must not carry a week of samples along;
+    week/month keep the full 7-day slider maximum so a raised lookback works
+    immediately (D9).
+    """
+    c = _bare_coordinator()
+    old = NOW - timedelta(days=2)
+    for window in ("5h", "week", "month"):
+        c._record_usage_sample("ws1", window, 10.0, old)
+        c._record_usage_sample("ws1", window, 20.0, NOW)
+
+    assert c._usage_samples["ws1:5h"] == [(NOW, 20.0, None)]
+    assert c._usage_samples["ws1:week"] == [(old, 10.0, None), (NOW, 20.0, None)]
+    assert c._usage_samples["ws1:month"] == [(old, 10.0, None), (NOW, 20.0, None)]
+
+
+def test_record_usage_sample_caps_history_at_the_sample_cap(monkeypatch):
+    """[REQ-015] only the newest ``BURN_SAMPLE_CAP`` samples are retained.
+
+    The production cap is 10080 per window/window (D9). Creating 10k rows per
+    test would be slow and prove nothing extra, so the cap is shrunk to a
+    synthetic size and the "keep the newest N, drop the oldest" behaviour is
+    asserted on that: with cap 5 and 8 recorded samples, samples 0..2 go.
+    """
+    monkeypatch.setattr(coord, "BURN_SAMPLE_CAP", 5)
     c = _bare_coordinator()
     base = NOW - timedelta(seconds=200)
-    for i in range(70):
+    for i in range(8):
         c._record_usage_sample("ws1", "5h", float(i), base + timedelta(seconds=i))
     samples = c._usage_samples["ws1:5h"]
-    assert len(samples) == 64
-    assert samples[0] == (base + timedelta(seconds=6), 6.0)
-    assert samples[-1] == (base + timedelta(seconds=69), 69.0)
+    assert len(samples) == 5
+    assert samples[0] == (base + timedelta(seconds=3), 3.0, None)
+    assert samples[-1] == (base + timedelta(seconds=7), 7.0, None)
 
 
 # ---------------------------------------------------------------------------
@@ -407,9 +457,13 @@ def test_update_data_records_samples_only_on_ok_status():
     c, result = _run_update(response=_api_usage())
     assert result["workspaces"][0]["status"] == "ok"
     assert set(c._usage_samples) == {"ws1:5h", "ws1:week", "ws1:month"}
-    assert [pct for _, pct in c._usage_samples["ws1:5h"]] == [10.0]
-    assert [pct for _, pct in c._usage_samples["ws1:week"]] == [20.0]
-    assert [pct for _, pct in c._usage_samples["ws1:month"]] == [30.0]
+    assert [sample[1] for sample in c._usage_samples["ws1:5h"]] == [10.0]
+    assert [sample[1] for sample in c._usage_samples["ws1:week"]] == [20.0]
+    assert [sample[1] for sample in c._usage_samples["ws1:month"]] == [30.0]
+    # The API's resetsAt is parsed into the third tuple element.
+    assert c._usage_samples["ws1:5h"][0][2] == datetime(
+        2026, 9, 7, 13, 0, 0, tzinfo=timezone.utc
+    )
 
 
 def test_update_data_records_no_sample_on_error_status():
@@ -447,9 +501,10 @@ def test_update_data_records_no_sample_for_non_numeric_percent():
 class _FakeCoordinator:
     """Minimal coordinator mirroring tests/test_sensor_wiring.py.
 
-    `_usage_samples` must exist (here as an empty class attribute) because
-    BurnRateSensor reads it; the wiring test overrides it with per-window
-    samples. A dict is intentional - sensor.py calls `.get(...)` on it.
+    Since 2.1.0 ``BurnRateSensor`` reads ``coordinator.burn_rate(key, win)``
+    (the OLS kernel over the configured lookback) instead of iterating
+    ``_usage_samples`` itself. The minimal surface therefore exposes both a
+    ``_usage_samples`` store and the two burn helpers the sensor calls.
     """
 
     ws_name = "Work"
@@ -457,6 +512,16 @@ class _FakeCoordinator:
 
     def __init__(self, data):
         self.data = data
+
+    def burn_rate(self, key, win):
+        """Legacy-compatible slope: the 2h two-point kernel for these fixtures."""
+        return coord.burn_rate_per_hour(
+            self._usage_samples.get(f"{key}:{win}", [])
+        )
+
+    def burn_rate_diagnostics(self, key, win):
+        """Attributes the BurnRateSensor exposes (not asserted by this file)."""
+        return {"lookback_minutes": 120, "samples": 0, "lookback_too_short": False}
 
 
 class _FakeEntry:

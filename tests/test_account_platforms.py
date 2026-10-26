@@ -93,7 +93,9 @@ sys.modules["homeassistant.components.sensor"].SensorDeviceClass = _enum_like(
 sys.modules["homeassistant.components.binary_sensor"].BinarySensorDeviceClass = (
     _enum_like("problem", "connectivity")
 )
-sys.modules["homeassistant.components.number"].NumberMode = _enum_like("box")
+sys.modules["homeassistant.components.number"].NumberMode = _enum_like(
+    "box", "slider"
+)
 
 const = _load("go_gauge.const", str(BASE / "const.py"))
 _load("go_gauge.api", str(BASE / "api.py"))
@@ -361,12 +363,18 @@ async def test_workspace_branch_creates_no_account_entities():
         sensor.BurnRateSensor,
         sensor.ApiStatusSensor,
     }
-    assert {type(entity) for entity in buttons} == {button.RefreshButton}
+    assert {type(entity) for entity in buttons} == {
+        button.RefreshButton,
+        button.ResetBurnLookbacksButton,
+    }
     assert {type(entity) for entity in switches} == {switch.AutoUpdateUsageSwitch}
     assert {type(entity) for entity in numbers} == {
         number.WarnPercentNumber,
         number.PaceRedPercentNumber,
         number.UsageRefreshMinutesNumber,
+        number.BurnLookback5hNumber,
+        number.BurnLookbackWeekNumber,
+        number.BurnLookbackMonthNumber,
     }
 
 
@@ -808,13 +816,29 @@ def test_account_refresh_button_translation_key_is_canon_refresh():
 
 
 def test_account_refresh_button_key_is_translated_everywhere():
-    """[CANON1.4] ``refresh`` is the ONLY button translation key in all files."""
+    """[CANON1.4] Button translation keys are asserted PER ENTRY BRANCH.
+
+    The ACCOUNT branch keeps exactly one button (``refresh``). Since 2.1.0 the
+    WORKSPACE branch adds ``reset_burn_lookbacks`` next to ``refresh`` - the
+    translation master files necessarily carry the union of both branches, so
+    a global "only refresh" assertion would be wrong, not the files.
+    """
     import json
 
-    assert button.AccountRefreshButton.__dict__["_attr_translation_key"] == "refresh"
+    account_keys = {button.AccountRefreshButton.__dict__["_attr_translation_key"]}
+    workspace_keys = {
+        button.RefreshButton.__dict__["_attr_translation_key"],
+        button.ResetBurnLookbacksButton.__dict__["_attr_translation_key"],
+    }
+    assert account_keys == {"refresh"}
+    assert workspace_keys == {"refresh", "reset_burn_lookbacks"}
+
     for rel in ("strings.json", "translations/de.json", "translations/en.json"):
         data = json.loads((BASE / rel).read_text(encoding="utf-8"))
-        assert set(data["entity"]["button"]) == {"refresh"}, rel
+        keys = set(data["entity"]["button"])
+        assert account_keys <= keys, rel
+        assert workspace_keys <= keys, rel
+        assert keys == account_keys | workspace_keys, rel
 
 
 def test_account_models_number_bounds_are_literal_1_to_1440():
