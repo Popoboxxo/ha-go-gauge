@@ -194,6 +194,13 @@ DEFAULT_LOOKBACKS_OPTIONS = {
 # [REQ-015] the reset button (D3/D4)
 # ---------------------------------------------------------------------------
 
+def test_refresh_buttons_stay_primary_and_reset_is_diagnostic():
+    """[Canon 1.8.0] Refresh actions stay uncategorised; reset stays diagnostic."""
+    assert getattr(button.RefreshButton, "_attr_entity_category", None) is None
+    assert getattr(button.AccountRefreshButton, "_attr_entity_category", None) is None
+    assert button.ResetBurnLookbacksButton._attr_entity_category == "diagnostic"
+
+
 def test_reset_button_identity_and_category():
     """[REQ-015] unique_id, DIAGNOSTIC category, restore icon."""
     entity = button.ResetBurnLookbacksButton(_live_coordinator(), _FakeEntry())
