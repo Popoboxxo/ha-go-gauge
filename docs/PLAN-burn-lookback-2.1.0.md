@@ -46,7 +46,7 @@ HA-Restart hinweg (die In-Memory-Semantik bleibt), keine neue Pace-Entity.
 | **D9** | Retention: Samples bis zum **Max-Slider-Wert** aufbewahren (5h 300 min, week/month 10080 min), **Cap 10080 Samples pro Fenster**; Erhöhen des Lookbacks wirkt sofort | Sonst wäre ein erhöhter Lookback leer, bis genug neue Samples anfallen. Der Cap verhindert unbegrenztes Wachstum im Speicher. |
 | **D10** | Reset-Erkennung: Historie löschen bei **Prozent-Drop ODER Änderung von `resets_at`** | Ein Fenster-Rollover ist nicht immer mit einem Prozent-Drop verbunden (z. B. 100 % → 100 % bei neuem Fenster). `resets_at` ist das verlässlichere Signal. |
 | **D11** | Forecast: Ø-Pace (`pct * T / t`) ab `t_min`; davor Recent-Rate-Fallback (`pct + burn_rate * remaining_h`); `pct == 0` → `0.0`; `t_min = max(15 min, 1 % der tatsächlichen Fensterlänge)` | Nach wenigen Minuten ist `pct/t` statistisch wertlos (Divisor nahe 0). Der Fallback nutzt die gemessene Steigung, solange der Ø-Pace noch nicht belastbar ist. |
-| **D12** | Ampel nutzt **Ø-Pace**; `forecast_recent` ist **Attribut** an Forecast und Pace; **keine zweite Pace-Entity** | Eine Ampel pro Fenster bleibt die UI-Wahrheit; die Zusatzinformation gehört als Attribut daneben, nicht als Entity-Duplikat. |
+| **D12** | Ampel nutzt **den primären Forecast** (ab `t_min` Ø-Pace, davor der Recent-Rate-Fallback aus D11); `forecast_recent` ist **Attribut** an Forecast und Pace; **keine zweite Pace-Entity** | Eine Ampel pro Fenster bleibt die UI-Wahrheit. Vor `t_min` existiert noch kein Ø-Pace; die Ampel fällt dann bewusst auf denselben Fallback zurück, den auch der Forecast-State zeigt — kein zweiter, abweichender Rechenpfad. Die Zusatzinformation gehört als Attribut daneben, nicht als Entity-Duplikat. |
 | **D13** | Options-Flow: die drei Lookbacks als Zahlenfelder mit Range-Validierung; fehlenden `pace_red_percent`-String ergänzen | Der Options-Flow ist der zweite Weg zu denselben Werten (neben den Slidern) und muss validieren. `pace_red_percent` fehlt heute in allen Sprachdateien → Roh-Key im UI. |
 | **D14** | Diagnostics: voller Debug-Block pro Workspace: `burn_lookback_minutes` je Fenster, Sample-Counts, effektive Lookback-Sekunden, `forecast_method` / `elapsed_fraction` | Ohne diese Werte ist „Burn-Rate ist None" nicht diagnostizierbar. Keine Tokens, keine Secrets. |
 | **D15** | Versionierung: `go_gauge` **2.1.0**, Canon **1.7.0**, ConfigEntry `VERSION` bleibt **8** (kein Migrator) | MINOR: neue Entities, aber kein Bruch. Kein Entry-Schema-Change → kein Migrator nötig (Canon-Regel „VERSION nur mit Migrator"). |
@@ -71,7 +71,7 @@ HA-Restart hinweg (die In-Memory-Semantik bleibt), keine neue Pace-Entity.
 | `burn_lookback.py` (**neu**) | HA-freie Logik: Lookback-Normalisierung/Defaults, Sample-Retention-Prune, OLS-Steigung, Forecast-Methodenwahl, Kalendermonat-Berechnung, `lookback_too_short`-Prädikat. Kein `homeassistant`-Import → direkt per `pytest` testbar. |
 | `const.py` | Option-Keys, Defaults, Ranges, Schrittweiten, Retention-Cap, `WINDOW_SECONDS` bleibt (nominal) als Fallback. |
 | `coordinator.py` | Optionen parsen (`burn_lookback_minutes: dict[str, int]`), `set_burn_lookback()`, Sample-Aufzeichnung mit `resets_at`, `burn_rate()`, `forecast_details()`. Die bestehenden HA-freien Kernel-Funktionen (`window_elapsed_fraction`, `forecast_percent`, `pace_status`, `burn_rate_per_hour`) bleiben für Rückwärtskompatibilität erhalten. |
-| `sensor.py` | Burn-Rate-Sensor nutzt `coordinator.burn_rate()` + Attribute; Forecast/Pace nutzen `coordinator.forecast_details()` + Attribute. Ampel weiterhin `pace_status()` auf Basis des Ø-Pace. |
+| `sensor.py` | Burn-Rate-Sensor nutzt `coordinator.burn_rate()` + Attribute; Forecast/Pace nutzen `coordinator.forecast_details()` + Attribute. Ampel weiterhin `pace_status()` auf Basis des primären Forecasts (Ø-Pace ab `t_min`, davor der Recent-Rate-Fallback — D12). |
 | `number.py` | Drei neue Slider (`EntityCategory.CONFIG`, `NumberMode.SLIDER`), Setter → Coordinator + `persist_options` + `async_update_listeners()`. |
 | `button.py` | Reset-Button (`EntityCategory.DIAGNOSTIC`, `mdi:restore`). |
 | `config_flow.py` | Options-Flow um drei validierte Zahlenfelder + `pace_red_percent` erweitert. |
@@ -253,3 +253,28 @@ und umgekehrt. Also erst **reservieren**, dann **aktivieren**.
 - Neue HA-Imports nur, wenn `tests/conftest.py` die Fake-Modulliste mitpflegt.
 - Keine Code-Änderung auf `main`/`master`; alles auf Feature-Branches.
 - Interne Doku Deutsch, Code/Commits Englisch, erste Commit-Zeile ≤ 72 Zeichen.
+
+---
+
+## 9. Review-Nachbesserungen (Stand Umsetzung)
+
+Das unabhängige Code-Review hat drei Punkte erzwungen, die hier festgehalten werden,
+damit Plan und Code nicht auseinanderlaufen:
+
+1. **Kalendermonat (M1).** Die erste Implementierung nahm die Länge des Monats, in dem
+   `resets_at` liegt (mit Sonderfall Monatserster). Das ist falsch für Reset-Zeitpunkte
+   mitten im Monat. Verbindlich bleibt §3.3: `period_start = period_end − 1 Kalendermonat`
+   (Tag via `calendar.monthrange` geklemmt), `T = period_end − period_start`. Damit
+   ergeben sich 28/29/30/31 Tage korrekt, ohne Sonderfall.
+2. **Ampel-Semantik (M2).** D12 ist präzisiert: die Ampel konsumiert den primären
+   Forecast. Vor `t_min` zeigt sie damit den Recent-Rate-Fallback; das ist gewollt, wird
+   in CHANGELOG/README benannt und durch einen Test gepinnt.
+3. **Retention je Fenster (D9).** Die Retention ist fenster-spezifisch
+   (`max` des jeweiligen Sliders: 5h 18000 s, week/month 604800 s) und nicht global —
+   damit die 5h-Historie nicht unnötig 7 Tage mitschleppt.
+
+Zusätzlich (Hygiene, aus demselben Review): `BURN_LOOKBACK_WINDOWS` ist typisiert
+(`TypedDict`), damit `mypy` grün bleibt; die Legacy-Kernel-Funktionen bleiben als
+Kompatibilitätsschicht erhalten, sind aber als nicht mehr produktiv genutzt markiert;
+das Test-Harness registriert ein echtes `go_gauge`-Paket, sodass der Import-Fallback in
+`coordinator.py` entfallen kann.

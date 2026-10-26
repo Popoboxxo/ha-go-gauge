@@ -20,12 +20,17 @@
 # (v7-Migration, Quelle: const.py `ENTITY_ID_MIGRATION`).
 #
 # Pflege: Bei jeder Aenderung an custom_components/go_gauge/* nachziehen.
-# Abgeglichen mit: v2.0.0 (Konto-Entry-Architektur: eigene, automatisch
-# angelegte Konto-Entry `unique_id = go_gauge_account` besitzt die Konto-
-# Entities und -Settings; Workspace-Entries sind reine Usage-Instanzen) -
+# Abgeglichen mit: v2.1.0 (Burn-Lookback-Einstellungen: drei Slider pro
+# Workspace konfigurieren den Burn-Rate-Lookback je Fenster, ein Reset-Button
+# stellt die Defaults wieder her; die Burn-Rate ist eine OLS-Steigung, die
+# Prognose waehlt zwischen Oe-Pace und Recent-Rate-Fallback, das Monatsfenster
+# nutzt die echte Kalendermonatlaenge) -
 # sensor.py, binary_sensor.py, number.py, switch.py, button.py, entity.py,
-# account.py, account_logic.py, const.py. Historische v7-Slug-Migration
-# (ENTITY_ID_MIGRATION) bleibt gueltig.
+# account.py, account_logic.py, burn_lookback.py, const.py. Die v2.0.0-
+# Konto-Entry-Architektur (eigene, automatisch angelegte Konto-Entry
+# `unique_id = go_gauge_account` besitzt die Konto-Entities und -Settings;
+# Workspace-Entries sind reine Usage-Instanzen) und die historische
+# v7-Slug-Migration (ENTITY_ID_MIGRATION) bleiben gueltig.
 
 version: 1
 domain: go_gauge
@@ -66,7 +71,7 @@ entities:
     unit: "%"
     state_class: measurement
     attributes: [workspace_key, window, status, note, resets_at_iso]
-    source: "sensor.py:105-165"
+    source: "sensor.py:103-165"
   - logical: reset
     platform: sensor
     device: workspace
@@ -75,7 +80,7 @@ entities:
     name_pattern: "Go Gauge {WS} {window_label} Reset"
     window_specific: true
     device_class: timestamp
-    source: "sensor.py:168-190"
+    source: "sensor.py:166-190"
   - logical: forecast
     platform: sensor
     device: workspace
@@ -85,8 +90,9 @@ entities:
     window_specific: true
     unit: "%"
     state_class: measurement
-    note: "Kann > 100 sein (bewusst; zeigt Budgetueberschreitung am Fensterende)."
-    source: "sensor.py:193-219"
+    attributes: [forecast_recent, forecast_method, elapsed_fraction, window_seconds]
+    note: "Kann > 100 sein (bewusst; zeigt Budgetueberschreitung am Fensterende). forecast_method: pace (Oe-Pace ab der Mindest-Einschaltzeit) | recent (Recent-Rate-Fallback davor) | zero | unavailable."
+    source: "sensor.py:191-231"
   - logical: pace
     platform: sensor
     device: workspace
@@ -94,9 +100,9 @@ entities:
     unique_id_template: "{entry_id}_{workspace_key}_{window}_pace"
     name_pattern: "Go Gauge {WS} {window_label} Pace"
     window_specific: true
-    attributes: [forecast_percent, green_below, red_above]
-    note: "State ist ein englischer String: green | yellow | red."
-    source: "sensor.py:222-259"
+    attributes: [forecast_percent, forecast_recent, forecast_method, elapsed_fraction, window_seconds, green_below, red_above]
+    note: "State ist ein englischer String: green | yellow | red. Die Ampel folgt der PRIMAEREN Prognose (`forecast_percent`): `forecast_method` ist `pace` ab der Mindest-Einschaltzeit, davor `recent` - also nicht immer der Oe-Pace."
+    source: "sensor.py:232-281"
   - logical: remaining
     platform: sensor
     device: workspace
@@ -106,7 +112,7 @@ entities:
     window_specific: true
     unit: "%"
     state_class: measurement
-    source: "sensor.py:262-284"
+    source: "sensor.py:282-306"
   - logical: time_to_reset
     platform: sensor
     device: workspace
@@ -116,7 +122,7 @@ entities:
     window_specific: true
     device_class: duration
     unit: "h"
-    source: "sensor.py:287-306"
+    source: "sensor.py:307-328"
   - logical: burn_rate
     platform: sensor
     device: workspace
@@ -126,7 +132,9 @@ entities:
     window_specific: true
     unit: "%/h"
     state_class: measurement
-    source: "sensor.py:309-330"
+    attributes: [lookback_minutes, samples, lookback_too_short]
+    note: "OLS-Steigung ueber alle Samples im konfigurierten Lookback (negativ -> unknown). lookback_too_short: zu wenig Historie fuer eine stabile Steigung."
+    source: "sensor.py:329-359"
   - logical: rate_limited
     platform: binary_sensor
     device: workspace
@@ -135,7 +143,7 @@ entities:
     name_pattern: "Go Gauge {WS} {window_label} rate-limited"
     window_specific: true
     device_class: problem
-    source: "binary_sensor.py:63-96"
+    source: "binary_sensor.py:63-98"
 
   # --- Workspace-Ebene (window_specific: false) ------------------------------
   - logical: subscription_active
@@ -147,7 +155,7 @@ entities:
     window_specific: false
     device_class: connectivity
     attributes: [workspace_key, note]
-    source: "binary_sensor.py:99-136"
+    source: "binary_sensor.py:99-138"
   - logical: warn_percent
     platform: number
     device: workspace
@@ -160,7 +168,7 @@ entities:
     max: 100
     default: 80
     note: "Gruen/Gelb-Grenze der Pace-Ampel."
-    source: "number.py:102-122"
+    source: "number.py:106-128"
   - logical: pace_red_percent
     platform: number
     device: workspace
@@ -173,7 +181,7 @@ entities:
     max: 300
     default: 100
     note: "Gelb/Rot-Grenze der Pace-Ampel."
-    source: "number.py:125-145"
+    source: "number.py:129-151"
   - logical: usage_refresh_minutes
     platform: number
     device: workspace
@@ -185,7 +193,58 @@ entities:
     min: 1
     max: 1440
     default: 10
-    source: "number.py:148-169"
+    source: "number.py:152-175"
+  - logical: burn_lookback_5h_minutes
+    platform: number
+    device: workspace
+    unique_id_suffix: "_burn_lookback_5h_minutes"
+    unique_id_template: "{entry_id}_burn_lookback_5h_minutes"
+    name_pattern: "Go Gauge {WS} 5h Burn Lookback"
+    translation_key: "burn_lookback_5h"
+    window_specific: false
+    entity_category: config
+    mode: slider
+    unit: "min"
+    min: 15
+    max: 300
+    step: 5
+    default: 120
+    note: "Lookback der Burn-Rate fuers 5h-Fenster. Live wirksam (kein Reload) und als Option persistiert."
+    source: "number.py:227-246"
+  - logical: burn_lookback_week_minutes
+    platform: number
+    device: workspace
+    unique_id_suffix: "_burn_lookback_week_minutes"
+    unique_id_template: "{entry_id}_burn_lookback_week_minutes"
+    name_pattern: "Go Gauge {WS} Weekly Burn Lookback"
+    translation_key: "burn_lookback_week"
+    window_specific: false
+    entity_category: config
+    mode: slider
+    unit: "min"
+    min: 60
+    max: 10080
+    step: 60
+    default: 720
+    note: "Lookback der Burn-Rate fuers Weekly-Fenster. Live wirksam (kein Reload) und als Option persistiert."
+    source: "number.py:247-263"
+  - logical: burn_lookback_month_minutes
+    platform: number
+    device: workspace
+    unique_id_suffix: "_burn_lookback_month_minutes"
+    unique_id_template: "{entry_id}_burn_lookback_month_minutes"
+    name_pattern: "Go Gauge {WS} Monthly Burn Lookback"
+    translation_key: "burn_lookback_month"
+    window_specific: false
+    entity_category: config
+    mode: slider
+    unit: "min"
+    min: 60
+    max: 10080
+    step: 60
+    default: 2880
+    note: "Lookback der Burn-Rate fuers Monthly-Fenster. Live wirksam (kein Reload) und als Option persistiert."
+    source: "number.py:264-280"
   - logical: auto_update_usage
     platform: switch
     device: workspace
@@ -193,7 +252,7 @@ entities:
     unique_id_template: "{entry_id}_auto_update_usage"
     name_pattern: "Go Gauge {WS} Auto Update Usage"
     window_specific: false
-    source: "switch.py:56-83"
+    source: "switch.py:56-84"
   - logical: refresh
     platform: button
     device: workspace
@@ -202,7 +261,19 @@ entities:
     name_pattern: "Go Gauge Refresh"
     window_specific: false
     note: "Laedt NUR Usage (setzt last_usage_fetch zurueck); der Katalog-Refresh ist der Konto-Button account_refresh. Beide Buttons teilen den Translation-Key `refresh`."
-    source: "button.py:49-68"
+    source: "button.py:55-76"
+  - logical: burn_lookback_reset
+    platform: button
+    device: workspace
+    unique_id_suffix: "_burn_lookback_reset"
+    unique_id_template: "{entry_id}_burn_lookback_reset"
+    name_pattern: "Go Gauge Reset Burn Lookbacks"
+    translation_key: "reset_burn_lookbacks"
+    window_specific: false
+    entity_category: diagnostic
+    icon: "mdi:restore"
+    note: "Setzt ausschliesslich die drei Burn-Lookbacks dieses Workspaces auf ihre Defaults (120 / 720 / 2880 min) - keine Sample-Historie, keine Schwellen, kein Refresh-Intervall. Ein Schreibvorgang fuer alle drei Optionen."
+    source: "button.py:77-105"
 
   # --- Konto-Ebene (workspace-unabhaengig, Konto-Entry) ----------------------
   # Alle Eintraege gehoeren der automatisch angelegten Konto-Entry
@@ -219,7 +290,7 @@ entities:
     account_entry: true
     attributes: [catalog_json, ranking_by_cost, free_models, cheapest_model, cheapest_overall, count, live_count, models_updated_at, account_auto_update_models, account_fetch_interval_minutes, account_models_refresh_minutes, account_last_models_outcome]
     note: "State = Anzahl. Es gibt KEINE Einzel-Entities pro Modell. Die vier account_*-Attribute spiegeln die globalen Konto-Settings (Basis- vs. effektives Intervall inkl. Backoff)."
-    source: "sensor.py:333-420"
+    source: "sensor.py:360-449"
   - logical: models_live_count
     platform: sensor
     device: account
@@ -229,7 +300,7 @@ entities:
     window_specific: false
     state_class: measurement
     account_entry: true
-    source: "sensor.py:423-437"
+    source: "sensor.py:450-466"
   - logical: cheapest_model
     platform: sensor
     device: account
@@ -239,7 +310,7 @@ entities:
     window_specific: false
     account_entry: true
     attributes: [cheapest_overall, ratio_usd_per_1m]
-    source: "sensor.py:440-460"
+    source: "sensor.py:467-489"
   - logical: free_models
     platform: sensor
     device: account
@@ -249,7 +320,7 @@ entities:
     window_specific: false
     account_entry: true
     note: "State = kommagetrennte Liste der kostenlosen Modelle."
-    source: "sensor.py:463-474"
+    source: "sensor.py:490-504"
   - logical: api_reachable
     platform: binary_sensor
     device: account
@@ -267,7 +338,7 @@ entities:
       ausschliesslich frischen Fehlschlaegen. TTL: Modelle 2x Konto-Basis-
       intervall (Fallback 120 min bei Auto-Refresh aus), Usage 3x Workspace-
       Intervall. Ein 5-Minuten-Publish-Tick schreibt den Zustand neu, ohne HTTP.
-    source: "binary_sensor.py:139-184"
+    source: "binary_sensor.py:139-200"
   - logical: account_refresh
     platform: button
     device: account
@@ -277,7 +348,7 @@ entities:
     window_specific: false
     account_entry: true
     note: "Laedt NUR den Modell-Katalog (AccountCoordinator.async_fetch_now); loest keinen Usage-Fetch aus. Translation-Key `refresh` wie beim Workspace-Button - unterschieden nur ueber das Device (Go Gauge Konto vs. Go Gauge <Workspace>); die entity_id ist device-praefixiert."
-    source: "button.py:71-83"
+    source: "button.py:106-118"
   - logical: account_auto_update_models
     platform: switch
     device: account
@@ -302,4 +373,4 @@ entities:
     max: 1440
     default: 60
     note: "Basisintervall des Katalog-Fetch; das effektive Intervall kann bei 403/Netzfehler per Backoff bis 60 min wachsen. Value = Basis, nicht Backoff."
-    source: "number.py:172-201"
+    source: "number.py:281-314"
