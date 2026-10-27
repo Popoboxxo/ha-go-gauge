@@ -48,7 +48,7 @@ DASHBOARDS_DIR = REPO_ROOT / "docs" / "dashboards"
 DASHBOARDS_EN = DASHBOARDS_DIR / "README.en.md"
 DASHBOARDS_DE = DASHBOARDS_DIR / "README.md"
 
-EXPECTED_VERSION = "2.1.0"
+EXPECTED_VERSION = "2.1.1"
 EXPECTED_MIN_HA = "2026.8.0"
 LANGUAGE_HEADER = "[English](README.md) | [Deutsch](README.de.md)"
 # Same switcher scheme one level down: the dashboard docs are README.en.md /
@@ -256,7 +256,7 @@ def test_manifest_metadata() -> None:
 
 
 def test_version_consistency_changelog_manifest() -> None:
-    """[REPO-HYGIENE] ``CHANGELOG.md`` and ``manifest.version`` agree on 2.1.0.
+    """[REPO-HYGIENE] ``CHANGELOG.md`` and ``manifest.version`` agree on 2.1.1.
 
     The tag counterpart (``v2.0.4``) is covered by
     ``tests/test_ha_compat.py``; here only the documented release history is
@@ -267,7 +267,7 @@ def test_version_consistency_changelog_manifest() -> None:
     manifest = json.loads(_read(MANIFEST_FILE))
 
     headings = [
-        f"## [{EXPECTED_VERSION}] — 2026-10-26",
+        f"## [{EXPECTED_VERSION}] — 2026-10-27",
         "## [2.0.1] — 2026-10-25",
         "## [2.0.0] — 2026-10-25",
     ]
