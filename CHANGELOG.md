@@ -1,5 +1,34 @@
 # Changelog
 
+## [2.1.1] — 2026-10-27
+
+### Summary
+
+Entity categories align `go_gauge` with Canon 1.8.0: configuration entities are
+grouped under **Configuration**, the burn-lookback reset under **Diagnostics**.
+No entity, `unique_id`, state or history changes.
+
+### 🔧 Changed
+
+- Settings numbers (`warning_threshold`, `pace_red_limit`, `usage_refresh_min`,
+  `models_refresh_min`) and both auto-update switches now use
+  `EntityCategory.CONFIG`.
+- The burn-lookback sliders keep `EntityCategory.CONFIG`; the reset button keeps
+  `EntityCategory.DIAGNOSTIC`.
+- Primary sensors/binary sensors and the refresh buttons stay uncategorised, so
+  they remain on the main device card.
+
+### 🔧 Canon
+
+- Pins `ha-gauge-standard` to **Canon 1.8.0** (`8bb141a`), including the new
+  entity-category policy and its checker enforcement.
+
+### 💥 Breaking changes
+
+None. Categories are UI/registry metadata only: no `unique_id`, `entity_id`,
+state, history or automation changes. Existing installations only see the
+entities move to the Configuration/Diagnostics sections.
+
 ## [2.1.0] — 2026-10-26
 
 ### Summary
