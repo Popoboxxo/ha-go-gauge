@@ -135,6 +135,7 @@ api = load("go_gauge.api", f"{BASE}/api.py")
 catalog = load("go_gauge.catalog", f"{BASE}/catalog.py")
 account_logic = load("go_gauge.account_logic", f"{BASE}/account_logic.py")
 coord = load("go_gauge.coordinator", f"{BASE}/coordinator.py")
+load("go_gauge.account_coordinator", f"{BASE}/account_coordinator.py")
 account = load("go_gauge.account", f"{BASE}/account.py")
 
 

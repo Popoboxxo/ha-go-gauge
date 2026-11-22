@@ -103,6 +103,7 @@ _load("go_gauge.catalog", str(BASE / "catalog.py"))
 account_logic = _load("go_gauge.account_logic", str(BASE / "account_logic.py"))
 _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 _load("go_gauge.entity", str(BASE / "entity.py"))
+account_coordinator = _load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
 account = _load("go_gauge.account", str(BASE / "account.py"))
 sensor = _load("go_gauge.sensor", str(BASE / "sensor.py"))
 binary_sensor = _load("go_gauge.binary_sensor", str(BASE / "binary_sensor.py"))
@@ -248,9 +249,9 @@ def _install_client(monkeypatch) -> MagicMock:
     """Inject a fake API client - no HTTP leaves the process."""
     client = MagicMock()
     client.fetch_models = AsyncMock(return_value=["glm-5", "glm-5-free"])
-    monkeypatch.setattr(account, "OpenCodeGoApiClient", lambda _session: client)
+    monkeypatch.setattr(account_coordinator, "OpenCodeGoApiClient", lambda _session: client)
     monkeypatch.setattr(
-        account, "async_get_clientsession", lambda _hass: MagicMock()
+        account_coordinator, "async_get_clientsession", lambda _hass: MagicMock()
     )
     return client
 

@@ -74,6 +74,7 @@ _load("go_gauge.api", str(BASE / "api.py"))
 _load("go_gauge.catalog", str(BASE / "catalog.py"))
 account_logic = _load("go_gauge.account_logic", str(BASE / "account_logic.py"))
 _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
+account_coordinator = _load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
 account = _load("go_gauge.account", str(BASE / "account.py"))
 
 
@@ -571,9 +572,9 @@ class TestEnsureAdoptionLockReentrancy:
         # Offline client for the setup's one-time first fetch.
         client = MagicMock()
         client.fetch_models = AsyncMock(return_value=["glm-5", "glm-5-free"])
-        monkeypatch.setattr(account, "OpenCodeGoApiClient", lambda _session: client)
+        monkeypatch.setattr(account_coordinator, "OpenCodeGoApiClient", lambda _session: client)
         monkeypatch.setattr(
-            account, "async_get_clientsession", lambda _hass: MagicMock()
+            account_coordinator, "async_get_clientsession", lambda _hass: MagicMock()
         )
 
         await asyncio.wait_for(account.async_ensure_account_entry(hass), timeout=1)

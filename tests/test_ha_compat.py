@@ -100,6 +100,7 @@ _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 # module may have swapped the fake module object, so re-install the stable
 # double right before the import.
 conftest.install_config_entry_state_stub()
+_load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
 _load("go_gauge.account", str(BASE / "account.py"))
 init_module = _load("go_gauge.__init__", str(BASE / "__init__.py"))
 config_flow = _load("go_gauge.config_flow", str(BASE / "config_flow.py"))
@@ -271,7 +272,7 @@ def test_account_coordinator_has_no_config_entry() -> None:
     prohibitions in docstrings, so a raw text grep would be a false positive by
     construction.
     """
-    tree = ast.parse((BASE / "account.py").read_text(encoding="utf-8"))
+    tree = ast.parse((BASE / "account_coordinator.py").read_text(encoding="utf-8"))
     coordinator = next(
         (
             node
@@ -280,7 +281,9 @@ def test_account_coordinator_has_no_config_entry() -> None:
         ),
         None,
     )
-    assert coordinator is not None, "AccountCoordinator class not found in account.py"
+    assert coordinator is not None, (
+        "AccountCoordinator class not found in account_coordinator.py"
+    )
 
     config_entry_kwargs: list[str] = []
     self_config_entry: list[str] = []

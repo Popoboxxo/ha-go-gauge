@@ -107,6 +107,7 @@ _load("go_gauge.catalog", str(BASE / "catalog.py"))
 account_logic = _load("go_gauge.account_logic", str(BASE / "account_logic.py"))
 _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 _load("go_gauge.entity", str(BASE / "entity.py"))
+_load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
 account = _load("go_gauge.account", str(BASE / "account.py"))
 diagnostics = _load("go_gauge.diagnostics", str(BASE / "diagnostics.py"))
 
