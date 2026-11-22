@@ -70,6 +70,7 @@ account_logic = _load("go_gauge.account_logic", str(BASE / "account_logic.py"))
 _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 account_coordinator = _load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
 _load("go_gauge.account_reachability", str(BASE / "account_reachability.py"))
+account_adoption = _load("go_gauge.account_adoption", str(BASE / "account_adoption.py"))
 account = _load("go_gauge.account", str(BASE / "account.py"))
 
 # The four non-per-kind adoption issue ids (plan §4.4/§4.7).
@@ -143,8 +144,8 @@ def adoption_registries():
     device = conftest.install_device_registry_stub(conftest.FakeDeviceRegistry(entity))
     # Re-point the module references ``account.py`` bound at import time at the
     # currently installed fake modules (other test files replace them).
-    account.er = sys.modules["homeassistant.helpers.entity_registry"]
-    account.dr = sys.modules["homeassistant.helpers.device_registry"]
+    account_adoption.er = sys.modules["homeassistant.helpers.entity_registry"]
+    account_adoption.dr = sys.modules["homeassistant.helpers.device_registry"]
     conftest.reset_write_log()
     return entity, device
 

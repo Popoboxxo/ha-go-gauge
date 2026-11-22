@@ -96,12 +96,13 @@ const = _load("go_gauge.const", str(BASE / "const.py"))
 _load("go_gauge.api", str(BASE / "api.py"))
 _load("go_gauge.catalog", str(BASE / "catalog.py"))
 _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
-# account.py binds ConfigEntryState at import time; a later-collected
-# module may have swapped the fake module object, so re-install the stable
-# double right before the import.
+# account_coordinator/account_reachability bind ConfigEntryState at import
+# time; a later-collected module may have swapped the fake module object, so
+# re-install the stable double right before the import.
 conftest.install_config_entry_state_stub()
 _load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
 _load("go_gauge.account_reachability", str(BASE / "account_reachability.py"))
+_load("go_gauge.account_adoption", str(BASE / "account_adoption.py"))
 _load("go_gauge.account", str(BASE / "account.py"))
 init_module = _load("go_gauge.__init__", str(BASE / "__init__.py"))
 config_flow = _load("go_gauge.config_flow", str(BASE / "config_flow.py"))
@@ -252,7 +253,9 @@ def test_no_deprecated_device_registry_lookup() -> None:
         f"async_get_device is deprecated (HA 2027.8): {deprecated_lookups}"
     )
 
-    account_source = (BASE / "account.py").read_text(encoding="utf-8")
+    # The device-registry access lives in account_adoption.py since the 2.1.0
+    # split (plan §4.3) - the regex belt and its positive control follow it there.
+    account_source = (BASE / "account_adoption.py").read_text(encoding="utf-8")
     assert not re.search(r"\bdev_reg\.devices\b", account_source)
     assert ".devices.values(" not in account_source
     # Positive control: the supported lookup must be present, otherwise the

@@ -94,6 +94,7 @@ coord = _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 _load("go_gauge.entity", str(BASE / "entity.py"))
 _load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
 _load("go_gauge.account_reachability", str(BASE / "account_reachability.py"))
+_load("go_gauge.account_adoption", str(BASE / "account_adoption.py"))
 account = _load("go_gauge.account", str(BASE / "account.py"))
 binary_sensor = _load("go_gauge.binary_sensor", str(BASE / "binary_sensor.py"))
 

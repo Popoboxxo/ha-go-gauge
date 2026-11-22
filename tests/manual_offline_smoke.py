@@ -137,6 +137,7 @@ account_logic = load("go_gauge.account_logic", f"{BASE}/account_logic.py")
 coord = load("go_gauge.coordinator", f"{BASE}/coordinator.py")
 load("go_gauge.account_coordinator", f"{BASE}/account_coordinator.py")
 load("go_gauge.account_reachability", f"{BASE}/account_reachability.py")
+load("go_gauge.account_adoption", f"{BASE}/account_adoption.py")
 account = load("go_gauge.account", f"{BASE}/account.py")
 
 

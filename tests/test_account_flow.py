@@ -76,6 +76,7 @@ account_logic = _load("go_gauge.account_logic", str(BASE / "account_logic.py"))
 _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 account_coordinator = _load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
 _load("go_gauge.account_reachability", str(BASE / "account_reachability.py"))
+account_adoption = _load("go_gauge.account_adoption", str(BASE / "account_adoption.py"))
 account = _load("go_gauge.account", str(BASE / "account.py"))
 
 
@@ -564,9 +565,9 @@ class TestEnsureAdoptionLockReentrancy:
         conftest.install_device_registry_stub(
             conftest.FakeDeviceRegistry(entity_registry)
         )
-        account.er = sys.modules["homeassistant.helpers.entity_registry"]
-        account.dr = sys.modules["homeassistant.helpers.device_registry"]
-        account.ir = sys.modules["homeassistant.helpers.issue_registry"]
+        account_adoption.er = sys.modules["homeassistant.helpers.entity_registry"]
+        account_adoption.dr = sys.modules["homeassistant.helpers.device_registry"]
+        account_adoption.ir = sys.modules["homeassistant.helpers.issue_registry"]
         conftest.reset_write_log()
         conftest.install_timer_stub()
 
