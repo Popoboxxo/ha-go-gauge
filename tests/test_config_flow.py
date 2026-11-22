@@ -50,7 +50,12 @@ def _load(name: str, path: str):
 conftest.install_ha_stubs()
 
 # Load real modules after the shared fakes are guaranteed to be in place.
+# `go_gauge.api` must be preloaded before `go_gauge.config_flow`: config_flow's
+# `from .api import BROWSER_HEADERS, USAGE_URL` is a relative import that needs
+# the dotted name already resolvable (same mechanic as the other _load helpers
+# across this test suite, e.g. tests/test_reauth_flow.py).
 const = _load("go_gauge.const", str(BASE / "const.py"))
+_load("go_gauge.api", str(BASE / "api.py"))
 config_flow = _load("go_gauge.config_flow", str(BASE / "config_flow.py"))
 
 

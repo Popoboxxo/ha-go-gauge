@@ -396,9 +396,19 @@ def _apply_anchor(
 
 
 # Full browser UA - Cloudflare blocks non-browser agents (Error 1010)
+# Still used by config_flow.py's own _probe_token header dict (see
+# docs/PLAN-api-endpoint-dedup-account-split.md 2.5/3.1) - not removed.
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
+
+# Distinctive own UA for the documented /inference/ endpoint (replaces the
+# Chrome-spoof above in api.py, see docs/PLAN-api-endpoint-dedup-account-split.md
+# 2.4a/2.5). Version is kept in sync with manifest.json by hand - no import
+# from manifest.json here to keep const.py free of file-I/O.
+API_USER_AGENT = (
+    "ha-go-gauge/2.1.1 (+https://github.com/Popoboxxo/ha-go-gauge)"
 )
 
 # Static pricing table (USD per 1M tokens). The Zen Go API does not expose

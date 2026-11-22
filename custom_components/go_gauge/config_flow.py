@@ -21,6 +21,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .api import BROWSER_HEADERS, USAGE_URL
 from .const import (
     ACCOUNT_ENTRY_UNIQUE_ID,
     ACCOUNT_MODELS_REFRESH_MAX,
@@ -36,12 +37,9 @@ from .const import (
     ENTITY_NAME_ACCOUNT,
     ENTRY_KIND_ACCOUNT,
     ENTRY_KIND_WORKSPACE,
-    USER_AGENT,
     conf_entry_kind,
     token_unique_id,
 )
-
-USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
 
 
 async def _probe_token(hass: HomeAssistant, token: str) -> tuple[bool, str | None]:
@@ -50,12 +48,7 @@ async def _probe_token(hass: HomeAssistant, token: str) -> tuple[bool, str | Non
     try:
         async with session.get(
             USAGE_URL,
-            headers={
-                "User-Agent": USER_AGENT,
-                "Accept": "application/json",
-                "Origin": "https://opencode.ai",
-                "Authorization": f"Bearer {token}",
-            },
+            headers={**BROWSER_HEADERS, "Authorization": f"Bearer {token}"},
             timeout=aiohttp.ClientTimeout(total=12),
         ) as resp:
             if resp.status == 401:
