@@ -151,7 +151,14 @@ class UsagePercentSensor(GoGaugeEntityBase, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         ws = self._ws(self._key)
-        attrs: dict[str, Any] = {"workspace_key": self._key, "window": self._win}
+        attrs: dict[str, Any] = {
+            "workspace_key": self._key,
+            "window": self._win,
+            "last_usage_fetch": (
+                self.coordinator.last_usage_fetch.isoformat()
+                if self.coordinator.last_usage_fetch else None
+            ),
+        }
         if ws:
             blk = (ws.get("windows") or {}).get(self._win) or {}
             reset = blk.get("resets_at")
@@ -404,6 +411,8 @@ class ModelCatalogSensor(GoGaugeAccountEntityBase, SensorEntity):
             self.coordinator.fetch_interval_minutes,
             self.coordinator.base_interval_minutes,
             self.coordinator.last_models_outcome,
+            self.coordinator.last_models_attempt,
+            self.coordinator.last_models_ok,
         )
         if cache_key == self._attrs_cache_key and self._attrs_cache is not None:
             return self._attrs_cache
@@ -439,6 +448,14 @@ class ModelCatalogSensor(GoGaugeAccountEntityBase, SensorEntity):
             "account_fetch_interval_minutes": self.coordinator.fetch_interval_minutes,
             "account_models_refresh_minutes": self.coordinator.base_interval_minutes,
             "account_last_models_outcome": self.coordinator.last_models_outcome,
+            "account_last_models_attempt": (
+                self.coordinator.last_models_attempt.isoformat()
+                if self.coordinator.last_models_attempt else None
+            ),
+            "account_last_models_ok": (
+                self.coordinator.last_models_ok.isoformat()
+                if self.coordinator.last_models_ok else None
+            ),
         }
         # Kompletter Katalog als JSON-String (Templates/LoV-freundlich)
         attrs["catalog_json"] = json.dumps(models, ensure_ascii=False)

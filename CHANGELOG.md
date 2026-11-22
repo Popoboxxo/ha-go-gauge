@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.2.0] — 2026-11-22
+
+### Summary
+
+Adds fetch-timestamp observability attributes and fixes a self-healing gap in
+the account-entity-collision repair issues.
+
+### ✨ Added
+
+- `last_usage_fetch` attribute on the per-window usage sensor
+  (`sensor.<prefix><workspace>_<window>_percent`), reflecting the workspace
+  coordinator's last successful usage fetch — makes a forced refresh
+  (`button.<prefix>refresh`) externally verifiable. (Fixes #47)
+- `account_last_models_attempt` / `account_last_models_ok` attributes on the
+  model catalog sensor, reflecting the account coordinator's last catalog
+  fetch attempt/success. (Fixes #47)
+
+### 🐛 Fixed
+
+- `account_entity_collision_<kind>` repair issues now self-resolve once all
+  collision losers are disabled and the winner is active — previously they
+  stayed in Repairs forever even after the adoption was effectively complete.
+  (Fixes #48)
+
+### 💥 Breaking changes
+
+None. Purely additive attributes + a repair-issue lifecycle fix; no entity,
+`unique_id`, or state changes.
+
+[Full Changelog](https://github.com/Popoboxxo/ha-go-gauge/compare/v2.1.2...v2.2.0)
+
 ## [2.1.2] — 2026-11-22
 
 ### Summary

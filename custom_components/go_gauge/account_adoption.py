@@ -457,19 +457,37 @@ def _sweep_entities(
                 )
 
         if losers:
-            _create_adoption_issue(
-                hass,
-                collision_issue_id,
-                translation_key="account_entity_collision",
-                placeholders={
-                    "kind": kind,
-                    "winner": winner_label,
-                    "losers": ", ".join(
-                        str(getattr(loser, "entity_id", "") or "")
-                        for loser in losers
-                    ),
-                },
-            )
+            def _disabled(candidate: Any) -> bool:
+                fresh = _fresh_entry(
+                    ent_reg, getattr(candidate, "entity_id", None), candidate
+                )
+                return getattr(fresh, "disabled_by", None) is not None
+
+            all_losers_disabled = all(_disabled(loser) for loser in losers)
+            winner_enabled = True
+            if blocker is None:
+                fresh_winner = _fresh_entry(ent_reg, winner.entity_id, winner)
+                winner_enabled = getattr(fresh_winner, "disabled_by", None) is None
+
+            if all_losers_disabled and winner_enabled:
+                # Settled: every loser is disabled and the winner is active -
+                # the collision is resolved, the repair issue must not linger
+                # forever (plan §4.4, issue #48).
+                _delete_adoption_issue(hass, collision_issue_id)
+            else:
+                _create_adoption_issue(
+                    hass,
+                    collision_issue_id,
+                    translation_key="account_entity_collision",
+                    placeholders={
+                        "kind": kind,
+                        "winner": winner_label,
+                        "losers": ", ".join(
+                            str(getattr(loser, "entity_id", "") or "")
+                            for loser in losers
+                        ),
+                    },
+                )
         else:
             _delete_adoption_issue(hass, collision_issue_id)
 
