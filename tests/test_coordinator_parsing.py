@@ -94,6 +94,19 @@ catalog = _load("go_gauge.catalog", str(BASE / "catalog.py"))
 coord = _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 
 
+def _live(ids):
+    """Build the ``fetch_models()``-shaped input: id -> free, from PRICING.
+
+    Preserves pre-existing test semantics (free came from the static PRICING
+    table) now that ``build_models_block`` takes ``[{"id", "free"}, ...]``
+    instead of a bare id list.
+    """
+    return [
+        {"id": mid, "free": bool((const.PRICING.get(mid) or {}).get("free"))}
+        for mid in ids
+    ]
+
+
 # ============================================================================
 # Test: _pnum() - Peak/Off-Peak tuple averaging
 # ============================================================================
@@ -254,7 +267,7 @@ def test_parse_reset_naive_datetime_converted_to_utc():
 
 def test_build_models_block_empty_live_ids():
     """[REQ-009] build_models_block([]) includes all known models from PRICING."""
-    result = catalog.build_models_block([])
+    result = catalog.build_models_block(_live([]))
     assert result["model_count_live"] == 0
     # Should include all models from const.PRICING
     model_ids = {m["id"] for m in result["models"]}
@@ -269,7 +282,7 @@ def test_build_models_block_empty_live_ids():
 
 def test_build_models_block_live_ids_in_models():
     """[REQ-009] live_ids are marked with live=True, others live=False."""
-    result = catalog.build_models_block(["grok-4.5", "gpt-5.6-luna"])
+    result = catalog.build_models_block(_live(["grok-4.5", "gpt-5.6-luna"]))
     grok_model = next((m for m in result["models"] if m["id"] == "grok-4.5"), None)
     assert grok_model is not None
     assert grok_model["live"] is True
@@ -292,7 +305,7 @@ def test_build_models_block_none_live_ids():
 
 def test_build_models_block_free_models_identified():
     """[REQ-009] Free models flagged correctly (ox-alpha-free)."""
-    result = catalog.build_models_block(["ox-alpha-free"])
+    result = catalog.build_models_block(_live(["ox-alpha-free"]))
     free_models = result["free_models"]
     assert "ox-alpha-free" in free_models
     assert len(free_models) == 1  # only one free model in PRICING
@@ -328,7 +341,7 @@ def test_build_models_block_dead_model_excluded_from_free_and_cheapest():
     Free-Modelle/Günstigstes (cheapest_overall) durften ihn daraufhin
     nicht mehr zeigen. Günstigstes (bezahlt) bleibt muse-spark.
     """
-    result = catalog.build_models_block(["muse-spark-1.2-contributor"])
+    result = catalog.build_models_block(_live(["muse-spark-1.2-contributor"]))
     # Katalog-Listing behält den Altlast transparent (live: false)
     dead = next((m for m in result["models"] if m["id"] == "ox-alpha-free"), None)
     assert dead is not None
@@ -343,7 +356,7 @@ def test_build_models_block_dead_model_excluded_from_free_and_cheapest():
 
 def test_build_models_block_cheapest_model_paid():
     """[REQ-009] cheapest_model ignores free models, uses paid ranking."""
-    result = catalog.build_models_block(["ox-alpha-free", "muse-spark-1.2-contributor"])
+    result = catalog.build_models_block(_live(["ox-alpha-free", "muse-spark-1.2-contributor"]))
     # ox-alpha-free is free, so cheapest_model should be muse-spark (cheapest paid)
     assert result["cheapest_model"] == "muse-spark-1.2-contributor"
     # cheapest_overall includes free, so ox-alpha-free should win (free=0.0)
@@ -352,13 +365,13 @@ def test_build_models_block_cheapest_model_paid():
 
 def test_build_models_block_cheapest_overall_free_model():
     """[REQ-009] cheapest_overall picks free model if available."""
-    result = catalog.build_models_block(["ox-alpha-free"])
+    result = catalog.build_models_block(_live(["ox-alpha-free"]))
     assert result["cheapest_overall"] == "ox-alpha-free"
     # Fix 2026-09-05: nur ox-alpha-free ist live -> kein bezahltes Modell
     # live -> cheapest_model None (PRICING-Altlasten fuellen nichts mehr)
     assert result["cheapest_model"] is None
     # Sobald muse-spark ebenfalls live ist, ist es das guenstigste bezahlte
-    result2 = catalog.build_models_block(["ox-alpha-free", "muse-spark-1.2-contributor"])
+    result2 = catalog.build_models_block(_live(["ox-alpha-free", "muse-spark-1.2-contributor"]))
     assert result2["cheapest_model"] == "muse-spark-1.2-contributor"
 
 
@@ -366,7 +379,7 @@ def test_build_models_block_cheapest_overall_no_pricing_data():
     """[REQ-009] models without pricing info excluded from ranking."""
     # All models in const.PRICING have pricing, so this is edge-case only
     # but the logic should handle unknown models gracefully
-    result = catalog.build_models_block([])
+    result = catalog.build_models_block(_live([]))
     # All should have pricing_known=True from PRICING table
     for model in result["models"]:
         assert model["pricing_known"] is True
@@ -375,12 +388,48 @@ def test_build_models_block_cheapest_overall_no_pricing_data():
 def test_build_models_block_includes_timestamp():
     """[REQ-009] build_models_block includes models_updated_at timestamp."""
     before = datetime.now(timezone.utc)
-    result = catalog.build_models_block([])
+    result = catalog.build_models_block(_live([]))
     after = datetime.now(timezone.utc)
 
     timestamp_str = result["models_updated_at"]
     timestamp = datetime.fromisoformat(timestamp_str)
     assert before <= timestamp <= after
+
+
+def test_build_models_block_live_free_wins_even_without_pricing_entry():
+    """[REQ-009] Fix 2026-11-22: a live free model not in PRICING is free.
+
+    Regression test for the stale-PRICING bug: the API rotates free models
+    (e.g. ``beam-free``) faster than the static table is maintained, so the
+    live cost signal (not PRICING) must decide "free".
+    """
+    result = catalog.build_models_block([{"id": "beam-free", "free": True}])
+    assert "beam-free" in result["free_models"]
+    model = next(m for m in result["models"] if m["id"] == "beam-free")
+    assert model["free"] is True
+    assert model["pricing_known"] is False
+
+
+def test_build_models_block_live_overrides_stale_static_free_flag():
+    """[REQ-009] A live "not free" signal overrides a stale PRICING free=True."""
+    result = catalog.build_models_block([{"id": "ox-alpha-free", "free": False}])
+    model = next(m for m in result["models"] if m["id"] == "ox-alpha-free")
+    assert model["free"] is False
+    assert "ox-alpha-free" not in result["free_models"]
+
+
+def test_build_models_block_non_live_model_still_uses_static_pricing():
+    """[REQ-009] A non-live model (PRICING only) keeps the static free flag.
+
+    Unchanged regression coverage: a model the API no longer lists has no
+    live signal, so PRICING is still the only source for "free" - but it is
+    still excluded from free_models via the existing live-filter.
+    """
+    result = catalog.build_models_block([{"id": "muse-spark-1.2-contributor", "free": False}])
+    dead = next(m for m in result["models"] if m["id"] == "ox-alpha-free")
+    assert dead["live"] is False
+    assert dead["free"] is True
+    assert "ox-alpha-free" not in result["free_models"]
 
 
 # NOTE: fetch_models/fetch_usage tests skipped here (complex aiohttp mocking).

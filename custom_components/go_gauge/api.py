@@ -33,12 +33,21 @@ class OpenCodeGoApiClient:
     def __init__(self, session: aiohttp.ClientSession) -> None:
         self._session = session
 
-    async def fetch_models(self) -> list[str]:
+    async def fetch_models(self) -> list[dict[str, Any]]:
         async with self._session.get(MODELS_URL, headers=BROWSER_HEADERS,
                                      timeout=aiohttp.ClientTimeout(total=30)) as resp:
             resp.raise_for_status()
             data = await resp.json(content_type=None)
-        return [m.get("id") for m in data.get("data", []) if m.get("id")]
+        models = []
+        for m in data.get("data", []):
+            mid = m.get("id")
+            if not mid:
+                continue
+            text_cost = ((m.get("cost") or {}).get("text") or {})
+            in_price = (text_cost.get("input") or {}).get("price")
+            out_price = (text_cost.get("output") or {}).get("price")
+            models.append({"id": mid, "free": in_price == 0 and out_price == 0})
+        return models
 
     async def fetch_usage(self, token: str) -> dict[str, Any]:
         headers = {**BROWSER_HEADERS, "Authorization": f"Bearer {token}"}
