@@ -80,13 +80,17 @@ from typing import Any
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import (
-    ACCOUNT_PLATFORMS,
-    DATA_ACCOUNT_KEY,
-    DATA_ADOPTION_LOCK,
-    DATA_ADOPTION_REPORT,
-    DOMAIN,
+# Re-exported for the stable public import path ``from .account import ...`` (plan
+# §4.3): the entity/device adoption sweep moved to ``account_adoption.py`` in the
+# 2.1.0 split. ``AdoptionReport``/``async_adopt_account_entities`` are used by the
+# lifecycle below; ``_delete_adoption_issues`` is called on account removal.
+from .account_adoption import (  # noqa: F401 - re-export
+    AdoptionReport,
+    _delete_adoption_issues,
+    async_adopt_account_entities,
+    async_remove_legacy_model_settings,
 )
+
 # Re-exported for the stable public import path ``from .account import ...`` that
 # __init__/platforms and the test loaders rely on (plan §4.3): the coordinator
 # runtime moved to ``account_coordinator.py`` in the 2.1.0 split.
@@ -98,6 +102,7 @@ from .account_coordinator import (  # noqa: F401 - re-export
     _seed_account_options,
     _workspace_options,
 )
+
 # Re-exported for the stable public import path ``from .account import ...`` (plan
 # §4.3): the reachability snapshot runtime moved to ``account_reachability.py`` in
 # the 2.1.0 split. ``_account_entries``/``_entry_is_loaded``/``_has_enabled_workspace``
@@ -112,15 +117,12 @@ from .account_reachability import (  # noqa: F401 - re-export
     collect_evidence,
     workspace_coordinators,
 )
-# Re-exported for the stable public import path ``from .account import ...`` (plan
-# §4.3): the entity/device adoption sweep moved to ``account_adoption.py`` in the
-# 2.1.0 split. ``AdoptionReport``/``async_adopt_account_entities`` are used by the
-# lifecycle below; ``_delete_adoption_issues`` is called on account removal.
-from .account_adoption import (  # noqa: F401 - re-export
-    AdoptionReport,
-    _delete_adoption_issues,
-    async_adopt_account_entities,
-    async_remove_legacy_model_settings,
+from .const import (
+    ACCOUNT_PLATFORMS,
+    DATA_ACCOUNT_KEY,
+    DATA_ADOPTION_LOCK,
+    DATA_ADOPTION_REPORT,
+    DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
