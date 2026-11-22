@@ -1,5 +1,38 @@
 # Changelog
 
+## [2.1.2] — 2026-11-22
+
+### Summary
+
+Internal refactor release — no entity, `unique_id`, or behavior changes for
+end users. Migrates the Go API client from the undocumented `/zen/` path to
+the documented `/inference/` endpoint with our own User-Agent, fixes a
+missing `Accept-Language` header in the config-flow token probe, and splits
+the 2349-line `account.py` into four focused modules.
+
+### 🔧 Changed
+
+- **API client** (`api.py`): endpoints migrated from `/zen/go/v1/*`
+  (undocumented) to the documented `/inference/go/v1/*` path; requests now
+  send our own `API_USER_AGENT` instead of a spoofed browser User-Agent.
+  Verified via a live burst-test (25/25 HTTP 200) before merging.
+- **`config_flow.py`**: the token probe now reuses `BROWSER_HEADERS` /
+  `USAGE_URL` from `api.py` instead of a duplicated, hand-built header dict.
+- **`account.py`** (2349 lines) split into `account.py` (lifecycle only, 636
+  lines), `account_coordinator.py`, `account_reachability.py`, and
+  `account_adoption.py` — pure module reorganization, no behavior change.
+
+### 🐛 Fixed
+
+- Missing `Accept-Language` header in the config-flow token probe (dropped
+  by the pre-dedup duplicate header dict; now present via `BROWSER_HEADERS`).
+
+### 💥 Breaking changes
+
+None. No entity, `unique_id`, or state changes.
+
+[Full Changelog](https://github.com/Popoboxxo/ha-go-gauge/compare/v2.1.1...v2.1.2)
+
 ## [2.1.1] — 2026-10-27
 
 ### Summary
