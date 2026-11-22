@@ -250,7 +250,9 @@ class _Hass:
 def _install_client(monkeypatch) -> MagicMock:
     """Inject a fake API client - no HTTP leaves the process."""
     client = MagicMock()
-    client.fetch_models = AsyncMock(return_value=["glm-5", "glm-5-free"])
+    client.fetch_models = AsyncMock(
+        return_value=[{"id": "glm-5", "free": False}, {"id": "glm-5-free", "free": True}]
+    )
     monkeypatch.setattr(account_coordinator, "OpenCodeGoApiClient", lambda _session: client)
     monkeypatch.setattr(
         account_coordinator, "async_get_clientsession", lambda _hass: MagicMock()

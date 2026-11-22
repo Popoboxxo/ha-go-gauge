@@ -160,8 +160,8 @@ async def _probe_live(tokens):
         client = api.OpenCodeGoApiClient(session)
 
         # 1) Modell-Katalog (public, immer 200)
-        live_ids = await client.fetch_models()
-        block = catalog.build_models_block(live_ids)
+        live_models = await client.fetch_models()
+        block = catalog.build_models_block(live_models)
         print(f"Katalog (live): {len(block['models'])} Modelle | "
               f"billigst={block['cheapest_model']} | free={block['free_models']}")
 

@@ -48,26 +48,42 @@ def efficiency(prices: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
-def build_models_block(live_ids: list[str] | None) -> dict[str, Any]:
+def build_models_block(live_models: list[dict[str, Any]] | None) -> dict[str, Any]:
     """Workspace-independent model catalog (one JSON blob for one sensor).
 
     Fix 2026-09-05 (User-Report): Free/cheapest/ranking werden NUR ueber
     live-gelistete Modelle berechnet. Ein statisch in PRICING gepflegtes
     Modell, das die API nicht mehr listet (z. B. ox-alpha-free), bleibt
     zwar im Katalog-Listing sichtbar (live: false), darf aber Free-Modelle/
-    Günstigstes nicht mehr belegen. Bei live_ids=None (noch nie erfolgreich
+    Günstigstes nicht mehr belegen. Bei live_models=None (noch nie erfolgreich
     geladen) ist kein Live-Filter moeglich -> vorheriges Verhalten.
+
+    Fix 2026-11-22: die statische PRICING-Tabelle veraltet bei jeder
+    Modell-Rotation und erkennt neue Free-Modelle nicht. Fuer live gelistete
+    Modelle ist daher die Live-Kosten-Antwort (``free`` pro Modell, von
+    :meth:`OpenCodeGoApiClient.fetch_models`) die Autoritaet - nicht die
+    statische Tabelle. Nur fuer nicht-live Modelle (nur noch in PRICING
+    bekannt) bleibt das PRICING-Flag die einzige Quelle.
     """
+    live_free_by_id = {m["id"]: bool(m.get("free")) for m in (live_models or []) if m.get("id")}
+    live_ids = list(live_free_by_id.keys())
     known = set(PRICING.keys())
     models = []
-    for mid in sorted(set(live_ids or []) | known):
+    for mid in sorted(set(live_ids) | known):
         p = PRICING.get(mid)
+        # "free" is appended AFTER the efficiency() spread (not before) so the
+        # live signal always wins - efficiency() also returns a "free" key
+        # (derived from the static PRICING entry) that would otherwise clobber
+        # the live-derived value via dict-literal key ordering.
         models.append({
             "id": mid,
-            "live": mid in (live_ids or []) if live_ids is not None else None,
-            "free": bool(p and p.get("free")),
+            "live": mid in live_ids if live_models is not None else None,
             "pricing_known": p is not None,
             **(efficiency(p) or {}),
+            "free": (
+                live_free_by_id[mid] if mid in live_free_by_id
+                else bool(p and p.get("free"))
+            ),
         })
     usable = [m for m in models if m.get("live") is not False]
     ranked = sorted(

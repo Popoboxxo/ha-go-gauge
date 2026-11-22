@@ -88,7 +88,7 @@ def timer():
 def _make_coordinator(
     *,
     options: dict[str, Any] | None = None,
-    models: list[str] | None = None,
+    models: list[dict] | None = None,
 ):
     """Build a real AccountCoordinator with a fake entry, hass and API client."""
     entry = conftest.StrictConfigEntry(
@@ -106,7 +106,9 @@ def _make_coordinator(
     with patch.object(account_coordinator, "async_get_clientsession", lambda _hass: MagicMock()):
         coordinator = account.AccountCoordinator(hass, entry)
     client = MagicMock()
-    client.fetch_models = AsyncMock(return_value=["glm-5"] if models is None else models)
+    client.fetch_models = AsyncMock(
+        return_value=[{"id": "glm-5", "free": False}] if models is None else models
+    )
     coordinator._client = client
     return coordinator, client, hass
 
@@ -232,7 +234,7 @@ async def test_stop_fetch_timer_is_idempotent(timer):
 @pytest.mark.asyncio
 async def test_async_fetch_now_fetches_and_stores_block(timer):
     """[PLAN2-E4] A successful fetch stores the catalog block and resets backoff."""
-    coordinator, client, _hass = _make_coordinator(models=["glm-5"])
+    coordinator, client, _hass = _make_coordinator(models=[{"id": "glm-5", "free": False}])
 
     await coordinator.async_fetch_now()
 
@@ -265,7 +267,7 @@ async def test_concurrent_fetch_calls_do_one_http_round_trip(timer):
         http_calls.append(1)
         started.set()
         await release.wait()
-        return ["glm-5"]
+        return [{"id": "glm-5", "free": False}]
 
     client.fetch_models = _slow_fetch
 
@@ -347,7 +349,7 @@ async def test_backoff_resets_on_success(timer):
     await coordinator.async_fetch_now()
     assert coordinator.fetch_interval_minutes == 40
 
-    client.fetch_models = AsyncMock(return_value=["glm-5"])
+    client.fetch_models = AsyncMock(return_value=[{"id": "glm-5", "free": False}])
     await coordinator.async_fetch_now()
 
     assert coordinator.data["backoff_failures"] == 0
@@ -362,7 +364,7 @@ async def test_backoff_resets_on_success(timer):
 @pytest.mark.asyncio
 async def test_fetch_error_keeps_old_block(timer):
     """[PLAN2-M5] A failed fetch keeps the last catalog and records the error."""
-    coordinator, client, _hass = _make_coordinator(models=["glm-5"])
+    coordinator, client, _hass = _make_coordinator(models=[{"id": "glm-5", "free": False}])
     await coordinator.async_fetch_now()
     before = coordinator.models_block
     assert before is not None

@@ -168,7 +168,9 @@ def _install_client(monkeypatch, *, error: Exception | None = None) -> MagicMock
     if error is not None:
         client.fetch_models = AsyncMock(side_effect=error)
     else:
-        client.fetch_models = AsyncMock(return_value=["glm-5", "glm-5-free"])
+        client.fetch_models = AsyncMock(
+            return_value=[{"id": "glm-5", "free": False}, {"id": "glm-5-free", "free": True}]
+        )
     monkeypatch.setattr(account_coordinator, "OpenCodeGoApiClient", lambda _session: client)
     monkeypatch.setattr(
         account_coordinator, "async_get_clientsession", lambda _hass: MagicMock()
@@ -571,13 +573,15 @@ def _register_coordinator(hass, entry, *, slow_fetch: bool = False, monkeypatch=
     async def _slow():
         started.set()
         await release.wait()
-        return ["glm-5"]
+        return [{"id": "glm-5", "free": False}]
 
     started = asyncio.Event()
     release = asyncio.Event()
 
     client = MagicMock()
-    client.fetch_models = _slow if slow_fetch else AsyncMock(return_value=["glm-5"])
+    client.fetch_models = _slow if slow_fetch else AsyncMock(
+        return_value=[{"id": "glm-5", "free": False}]
+    )
     if monkeypatch is not None:
         monkeypatch.setattr(account_coordinator, "OpenCodeGoApiClient", lambda _session: client)
         monkeypatch.setattr(

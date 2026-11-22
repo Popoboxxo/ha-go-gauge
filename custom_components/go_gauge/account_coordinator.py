@@ -323,7 +323,7 @@ class AccountCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """The actual (single-flight) fetch, publish and timer re-arm."""
         now = datetime.now(timezone.utc)
         try:
-            live_ids = await self._client.fetch_models()
+            live_models = await self._client.fetch_models()
         except Exception as err:  # noqa: BLE001 - must never propagate
             self.last_models_outcome = "fail"
             self._failures += 1
@@ -335,7 +335,7 @@ class AccountCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._effective_fetch_minutes(),
             )
         else:
-            self._models_block = build_models_block(live_ids)
+            self._models_block = build_models_block(live_models)
             self.last_models_ok = now
             self.last_models_outcome = "ok"
             self.last_error = None
