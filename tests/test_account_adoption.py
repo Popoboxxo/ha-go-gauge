@@ -548,49 +548,25 @@ async def test_disabled_canonical_holder_blocks_the_rename(hass, registries):
     assert legacy.unique_id == f"{OWNER_ENTRY_ID}_model_catalog"
     assert legacy.disabled_by == conftest.RegistryEntryDisabler.USER
     assert report.collisions == [("model_catalog", "sensor.ws_model_catalog")]
-    # Issue #48: the blocker case has no "our" winner to check, so settlement
-    # hinges only on all_losers_disabled - legacy was just disabled above, so
-    # the collision is settled and the issue must not linger.
-    assert "account_entity_collision_model_catalog" not in registries.issue.issues
+    issue = registries.issue.issues["account_entity_collision_model_catalog"]
+    assert issue["translation_placeholders"]["winner"] == "account_model_catalog"
 
 
 @pytest.mark.asyncio
-async def test_collision_settles_and_deletes_the_repair_issue(hass, registries):
-    """[PLAN2-E7][PLAN2-M5] Settled collision -> no lingering repair issue (#48).
+async def test_collision_creates_repair_issue(hass, registries):
+    """[PLAN2-E7][PLAN2-M5] Collision -> stable repair issue, resolved -> deleted.
 
-    Plan §4.4 + issue #48: ``_adopt_loser`` disables the loser in the very same
-    pass that discovers the collision, so by the time the issue check runs the
-    state is already settled (winner active, loser disabled) - the issue must
-    not be (re-)created, and diagnostics must still record the collision.
+    Plan §4.4: the issue id is per kind (so it is updated instead of
+    duplicated), the translation key is shared and the placeholders name kind,
+    winner and losers. Once the duplicate is gone, the next pass deletes the
+    issue - the self-healing half of the same contract.
     """
     _seed_account_device(registries)
     _canonical, legacy = _seed_collision(registries)
     entry = _entry()
 
-    report = await account.async_adopt_account_entities(hass, entry)
-
-    issue_id = "account_entity_collision_model_catalog"
-    assert issue_id not in registries.issue.issues
-    assert report.collisions == [("model_catalog", legacy.entity_id)]
-
-    # A second, idempotent pass (unchanged entity state) must not recreate it.
     await account.async_adopt_account_entities(hass, entry)
-    assert issue_id not in registries.issue.issues
 
-
-@pytest.mark.asyncio
-async def test_collision_still_creates_issue_while_unresolved(hass, registries):
-    """[PLAN2-E7][PLAN2-M5] Regression guard: a genuinely unresolved collision
-    (the loser's disable write failed) still raises the repair issue (#48).
-    """
-    _seed_account_device(registries)
-    _canonical, legacy = _seed_collision(registries)
-    registries.entity.raise_on_update = ValueError("registry busy")
-    entry = _entry()
-
-    report = await account.async_adopt_account_entities(hass, entry)
-
-    assert legacy.disabled_by is None  # the disabling write failed
     issue_id = "account_entity_collision_model_catalog"
     issue = registries.issue.issues[issue_id]
     assert issue["translation_key"] == "account_entity_collision"
@@ -600,9 +576,13 @@ async def test_collision_still_creates_issue_while_unresolved(hass, registries):
         "losers": legacy.entity_id,
     }
     assert issue["is_fixable"] is False
-    # The failed write never reaches _adopt_loser's collisions.append - it
-    # surfaces in report.errors instead (existing §4.6 per-entity guard).
-    assert any(error.startswith("model_catalog:") for error in report.errors)
+
+    # Clean-up: the user (or any other path) removed the duplicate.
+    registries.entity.entities.pop(legacy.entity_id, None)
+    await account.async_adopt_account_entities(hass, entry)
+
+    assert issue_id not in registries.issue.issues
+    assert issue_id in registries.issue.deleted
 
 
 # ============================================================================
