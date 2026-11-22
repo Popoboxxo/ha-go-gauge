@@ -45,15 +45,19 @@ flow writes the full option set.
 
 Since the 2.1.0 split (plan §4.3) the ``AccountCoordinator`` runtime, its
 option-seeding helpers and the shared ``hass.data[DOMAIN]`` accessor
-(``_domain_data``) live in :mod:`.account_coordinator`; this module re-exports
-``AccountCoordinator`` so the public ``from .account import AccountCoordinator``
-path stays stable for ``__init__`` and the platforms.
+(``_domain_data``) live in :mod:`.account_coordinator`, and the reachability
+evidence/snapshot runtime (``workspace_coordinators``, ``collect_evidence``,
+``ReachabilitySnapshot``, ``account_reachability_snapshot``,
+``account_reachability``) lives in :mod:`.account_reachability`; this module
+re-exports those public symbols so the ``from .account import ...`` path stays
+stable for ``__init__`` and the platforms.
 
 Import graph (kept acyclic on purpose): this module imports ``.const``,
-``.coordinator`` and ``.account_coordinator`` (which in turn owns the ``.api`` /
-``.catalog`` runtime dependencies); ``coordinator.py`` does NOT import this
-module and nothing here imports the integration ``__init__``, which imports this
-module.
+``.account_coordinator`` (which in turn owns the ``.api`` / ``.catalog`` runtime
+dependencies) and ``.account_reachability`` (which imports ``_domain_data`` from
+``.account_coordinator`` and ``GoGaugeCoordinator`` from ``.coordinator``);
+``coordinator.py`` does NOT import this module and nothing here imports the
+integration ``__init__``, which imports this module.
 
 KNOWN FOLLOW-UP (2.1.0, deliberately NOT in 2.0.0): this file still carries the
 coordinator, the lifecycle, the adoption and the reachability helpers at once,
@@ -70,7 +74,6 @@ import inspect
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import (
@@ -85,17 +88,14 @@ from homeassistant.helpers import issue_registry as ir
 
 from .const import (
     ACCOUNT_DEVICE_IDENTIFIER,
-    ACCOUNT_ENTRY_UNIQUE_ID,
     ACCOUNT_PLATFORMS,
     DATA_ACCOUNT_KEY,
     DATA_ADOPTION_LOCK,
     DATA_ADOPTION_REPORT,
-    DEFAULT_USAGE_REFRESH_MINUTES,
     DOMAIN,
     ENTRY_KIND_WORKSPACE,
     conf_entry_kind,
 )
-from .coordinator import GoGaugeCoordinator
 # Re-exported for the stable public import path ``from .account import ...`` that
 # __init__/platforms and the test loaders rely on (plan §4.3): the coordinator
 # runtime moved to ``account_coordinator.py`` in the 2.1.0 split.
@@ -106,6 +106,20 @@ from .account_coordinator import (  # noqa: F401 - re-export
     _isoformat,
     _seed_account_options,
     _workspace_options,
+)
+# Re-exported for the stable public import path ``from .account import ...`` (plan
+# §4.3): the reachability snapshot runtime moved to ``account_reachability.py`` in
+# the 2.1.0 split. ``_account_entries``/``_entry_is_loaded``/``_has_enabled_workspace``
+# are still used by ``async_ensure_account_entry`` below.
+from .account_reachability import (  # noqa: F401 - re-export
+    ReachabilitySnapshot,
+    _account_entries,
+    _entry_is_loaded,
+    _has_enabled_workspace,
+    account_reachability,
+    account_reachability_snapshot,
+    collect_evidence,
+    workspace_coordinators,
 )
 
 if TYPE_CHECKING:  # no runtime import: account_logic is loaded lazily on purpose
@@ -133,248 +147,6 @@ _CANONICAL_MODEL_SETTING_IDS: frozenset[str] = frozenset({
     "account_auto_update_models",
     "account_models_refresh_minutes",
 })
-
-
-def workspace_coordinators(hass: HomeAssistant) -> dict[str, GoGaugeCoordinator]:
-    """Return ``{entry_id: GoGaugeCoordinator}`` for the loaded workspace entries.
-
-    ``hass.data[DOMAIN]`` holds one runtime object per entry plus foreign keys
-    (e.g. ``_account``, the adoption lock), so the mapping
-    is filtered by type instead of trusting every value. Defensive on
-    ``hass.data``/``hass.data[DOMAIN]``: the legacy tests pass a ``MagicMock``
-    and diagnostics may run while ``hass.data`` is not a plain dict yet - both
-    must yield an empty mapping instead of raising.
-    """
-    hass_data = getattr(hass, "data", None)
-    if not isinstance(hass_data, dict):
-        return {}
-    domain_data = hass_data.get(DOMAIN)
-    if not isinstance(domain_data, dict):
-        return {}
-    return {
-        entry_id: coordinator
-        for entry_id, coordinator in domain_data.items()
-        if isinstance(coordinator, GoGaugeCoordinator)
-    }
-
-
-def collect_evidence(hass: HomeAssistant) -> list[Evidence]:
-    """Collect the timestamped fetch outcomes of the loaded coordinators.
-
-    The source of the reachability matrix (plan §5): one ``Evidence`` per
-    observed attempt -
-
-    * account catalog fetch -> ``source="models"`` (outcome ``ok``/``fail``),
-    * every loaded workspace cycle -> ``source="usage"`` with the workspace
-      name and the coordinator's ``last_usage_outcome`` (an unknown/missing
-      outcome counts as ``fail``: it must never be able to prove success).
-
-    Returns a plain list (the caller only iterates it). Defensive by design: a
-    coordinator without the evidence attributes (older object, test double) is
-    skipped instead of raising - this function runs from a sensor property and
-    must never take the entity update down.
-    """
-    from .account_logic import SOURCE_MODELS, SOURCE_USAGE, Evidence
-
-    evidence: list[Evidence] = []
-    data = _domain_data(hass)
-    account = data.get(DATA_ACCOUNT_KEY) if data is not None else None
-    if isinstance(account, AccountCoordinator):
-        attempt = getattr(account, "last_models_attempt", None)
-        if isinstance(attempt, datetime):
-            outcome = "ok" if getattr(account, "last_models_outcome", None) == "ok" else "fail"
-            evidence.append(Evidence(SOURCE_MODELS, None, outcome, attempt))
-
-    for coordinator in workspace_coordinators(hass).values():
-        attempt = getattr(coordinator, "last_usage_attempt", None)
-        if not isinstance(attempt, datetime):
-            continue
-        usage_outcome = getattr(coordinator, "last_usage_outcome", None)
-        if usage_outcome not in ("ok", "neutral", "fail"):
-            usage_outcome = "fail"
-        evidence.append(
-            Evidence(
-                SOURCE_USAGE,
-                getattr(coordinator, "ws_name", None),
-                usage_outcome,
-                attempt,
-            )
-        )
-    return evidence
-
-
-@dataclass(frozen=True)
-class ReachabilitySnapshot:
-    """One consistent reachability resolution plus the inputs it was built from.
-
-    The binary sensor and the diagnostics export need more than the tri-state
-    itself: the TTLs they publish and the per-evidence rows (age/TTL/fresh) come
-    from the SAME computation, so a state and its attributes can never disagree.
-    Hence this carrier instead of separate TTL helpers at the call sites - see
-    :func:`account_reachability_snapshot`.
-    """
-
-    reachability: Reachability
-    evidence: list[Evidence]
-    now: datetime
-    models_ttl: timedelta
-    usage_ttl: timedelta
-
-    def evidence_attributes(self) -> list[dict[str, Any]]:
-        """Render the evidence as JSON-safe attribute rows.
-
-        Each row carries ``age_s``/``ttl_s``/``fresh`` so a support case (and the
-        sensor attributes) can see WHY the matrix resolved the way it did. The
-        per-row freshness rule (``age <= ttl``, unknown source -> models TTL) is
-        applied HERE, on the same ``now``/TTL inputs the matrix itself used, so
-        the attributes explain exactly the state they were published with;
-        consumers only format the result and never recompute a ``now``.
-        """
-        rows: list[dict[str, Any]] = []
-        for item in self.evidence:
-            ttl = self.usage_ttl if item.source == "usage" else self.models_ttl
-            at = (
-                item.at
-                if item.at.tzinfo is not None
-                else item.at.replace(tzinfo=timezone.utc)
-            )
-            age = (self.now - at).total_seconds()
-            rows.append({
-                "source": item.source,
-                "workspace": item.workspace,
-                "outcome": item.outcome,
-                "age_s": round(age, 3),
-                "ttl_s": ttl.total_seconds(),
-                "fresh": age <= ttl.total_seconds(),
-            })
-        return rows
-
-
-def account_reachability_snapshot(hass: HomeAssistant) -> ReachabilitySnapshot:
-    """Collect evidence + TTLs ONCE and resolve the reachability matrix (plan §5).
-
-    The single computation site behind :func:`account_reachability`: it owns both
-    inputs of the matrix -
-
-    * the evidence (:func:`collect_evidence`: account catalog fetch + every
-      loaded workspace cycle),
-    * the TTLs (models = ``MODELS_TTL_FACTOR`` x the account's *configured base*
-      interval, fallback when auto-fetch is off; usage = ``USAGE_TTL_FACTOR`` x
-      the smallest workspace interval, fallback
-      ``DEFAULT_USAGE_REFRESH_MINUTES`` when no workspace is loaded).
-
-    Defensive by design: a missing account coordinator, a non-dict ``hass.data``
-    or a coordinator with broken attributes must never take a sensor update or
-    the diagnostics export down. In that case the resolution runs with EMPTY
-    evidence, which the matrix answers with ``None``/``no_evidence`` - "unknown"
-    instead of a made-up state.
-    """
-    from .account_logic import models_ttl, resolve_reachability, usage_ttl
-
-    now = datetime.now(timezone.utc)
-    evidence: list[Evidence] = []
-    models_ttl_ = models_ttl(None)
-    usage_minutes = DEFAULT_USAGE_REFRESH_MINUTES
-
-    try:
-        evidence = collect_evidence(hass)
-        data = _domain_data(hass)
-        account = data.get(DATA_ACCOUNT_KEY) if data is not None else None
-        if account is not None and bool(getattr(account, "auto_fetch", False)):
-            models_ttl_ = models_ttl(
-                int(getattr(account, "base_interval_minutes"))
-            )
-        minutes = [
-            int(
-                getattr(
-                    coordinator, "usage_minutes", DEFAULT_USAGE_REFRESH_MINUTES
-                )
-            )
-            for coordinator in workspace_coordinators(hass).values()
-        ]
-        if minutes:
-            usage_minutes = min(minutes)
-    except Exception as err:  # noqa: BLE001 - evidence is always optional
-        _LOGGER.debug(
-            "Go Gauge: reachability inputs unusable (%s) - resolving without "
-            "evidence",
-            err,
-        )
-        evidence = []
-        models_ttl_ = models_ttl(None)
-        usage_minutes = DEFAULT_USAGE_REFRESH_MINUTES
-
-    usage_ttl_ = usage_ttl(usage_minutes)
-    return ReachabilitySnapshot(
-        reachability=resolve_reachability(
-            evidence, now, models_ttl_, usage_ttl_
-        ),
-        evidence=list(evidence),
-        now=now,
-        models_ttl=models_ttl_,
-        usage_ttl=usage_ttl_,
-    )
-
-
-def account_reachability(hass: HomeAssistant) -> Reachability:
-    """Resolve the API reachability of this installation (plan §5).
-
-    THE one place where the TTL/evidence rule is applied for BOTH consumers -
-    the account binary sensor (:class:`binary_sensor.ApiReachableBinarySensor`)
-    and the diagnostics export. Neither consumer re-implements TTL scaling,
-    evidence collection or the resolution order; both go through this function
-    (or its :func:`account_reachability_snapshot` carrier when they also need
-    the TTLs/evidence rows).
-
-    TTLs: models evidence = ``MODELS_TTL_FACTOR`` x the account's configured
-    base interval (``MODELS_TTL_FALLBACK_MINUTES`` when auto-fetch is off),
-    usage evidence = ``USAGE_TTL_FACTOR`` x the smallest workspace usage interval
-    (``DEFAULT_USAGE_REFRESH_MINUTES`` when no workspace is loaded).
-
-    Never raises: without a coordinator (or with broken attributes) the matrix
-    resolves empty evidence into ``None``/``no_evidence``.
-    """
-    return account_reachability_snapshot(hass).reachability
-
-
-def _account_entries(entries: list[Any]) -> list[Any]:
-    """Return the entries whose ``unique_id`` marks them as the account entry."""
-    return [
-        entry for entry in entries
-        if getattr(entry, "unique_id", None) == ACCOUNT_ENTRY_UNIQUE_ID
-    ]
-
-
-def _entry_is_loaded(entry: Any) -> bool:
-    """Return ``True`` when the entry's state is ``ConfigEntryState.LOADED``.
-
-    Compares both by identity and by equality: in production this is the real
-    StrEnum (``is``), while the offline test fakes carry the raw string values
-    (``==``). A missing/unfamiliar ``state`` attribute is treated as "not
-    loaded"; the ensure then only logs at DEBUG level, because HA - not this
-    integration - owns (re)loading a stored entry (plan §7.2).
-    """
-    state = getattr(entry, "state", None)
-    loaded = getattr(ConfigEntryState, "LOADED", None)
-    if state is None or loaded is None:
-        return False
-    return bool(state is loaded or state == loaded)
-
-
-def _has_enabled_workspace(entries: list[Any]) -> bool:
-    """Return ``True`` when at least one enabled workspace entry exists.
-
-    Workspace = ``conf_entry_kind(entry.data) == ENTRY_KIND_WORKSPACE`` (the
-    default for every pre-2.0.0 entry). A disabled workspace does not count:
-    the account entry must not come into existence just because a workspace is
-    switched off (plan §3.5 - "deaktiviert = Nutzerintent respektieren").
-    """
-    for entry in entries:
-        if conf_entry_kind(getattr(entry, "data", None)) != ENTRY_KIND_WORKSPACE:
-            continue
-        if getattr(entry, "disabled_by", None) is None:
-            return True
-    return False
 
 
 async def async_ensure_account_entry(hass: HomeAssistant) -> None:

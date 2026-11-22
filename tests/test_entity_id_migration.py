@@ -81,6 +81,7 @@ _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 # double right before the import.
 conftest.install_config_entry_state_stub()
 _load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
+_load("go_gauge.account_reachability", str(BASE / "account_reachability.py"))
 _load("go_gauge.account", str(BASE / "account.py"))
 init_module = _load("go_gauge.__init__", str(BASE / "__init__.py"))
 

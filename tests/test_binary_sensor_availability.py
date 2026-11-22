@@ -93,6 +93,7 @@ account_logic = _load("go_gauge.account_logic", str(BASE / "account_logic.py"))
 coord = _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 _load("go_gauge.entity", str(BASE / "entity.py"))
 _load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
+_load("go_gauge.account_reachability", str(BASE / "account_reachability.py"))
 account = _load("go_gauge.account", str(BASE / "account.py"))
 binary_sensor = _load("go_gauge.binary_sensor", str(BASE / "binary_sensor.py"))
 
@@ -173,9 +174,10 @@ def _account_coordinator(**attrs):
 def _workspace_coordinator(*, attempt=None, outcome=None, usage_minutes=10,
                            name="Work"):
     """Bare ``GoGaugeCoordinator`` (no HA init) carrying only evidence attrs."""
-    # Build from the class account.py actually bound at ITS import time: that
-    # is the class ``workspace_coordinators`` isinstance-checks against.
-    module = _live("go_gauge.account")
+    # Build from the class account_reachability.py bound at ITS import time: that
+    # is the class ``workspace_coordinators`` isinstance-checks against (the
+    # evidence/reachability runtime moved there in the 2.1.0 split).
+    module = _live("go_gauge.account_reachability")
     coordinator = module.GoGaugeCoordinator.__new__(module.GoGaugeCoordinator)
     coordinator.ws_name = name
     coordinator.usage_minutes = usage_minutes
