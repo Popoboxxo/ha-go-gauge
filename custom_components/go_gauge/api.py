@@ -1,10 +1,12 @@
-"""Go Gauge HA - HTTP client for the opencode.ai Zen Go API.
+"""Go Gauge HA - HTTP client for the opencode.ai Go inference API.
 
 Deliberately HA-free: this module imports no ``homeassistant`` code, so the
 transport layer stays unit-testable without a Home-Assistant installation.
 
-Cloudflare note: plain urllib/requests get blocked (HTTP 403 Error 1010);
-aiohttp WITH full browser headers succeeds (verified live 2026-08-22).
+Endpoint note: migrated from the undocumented ``/zen/`` path to the documented
+``/inference/`` endpoint with our own distinctive User-Agent instead of a
+browser-header spoof, per docs/PLAN-api-endpoint-dedup-account-split.md
+2.4a/2.5 (burst-test verified live 2026-11-22, see plan 2.1b).
 """
 from __future__ import annotations
 
@@ -12,13 +14,13 @@ from typing import Any
 
 import aiohttp
 
-from .const import USER_AGENT, GoGaugeAuthError
+from .const import API_USER_AGENT, GoGaugeAuthError
 
-MODELS_URL = "https://opencode.ai/zen/go/v1/models"
-USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
+MODELS_URL = "https://opencode.ai/inference/go/v1/models"
+USAGE_URL = "https://opencode.ai/inference/go/v1/usage"
 
 BROWSER_HEADERS: dict[str, str] = {
-    "User-Agent": USER_AGENT,
+    "User-Agent": API_USER_AGENT,
     "Accept": "application/json",
     "Accept-Language": "en-US,en;q=0.9",
     "Origin": "https://opencode.ai",
@@ -26,7 +28,7 @@ BROWSER_HEADERS: dict[str, str] = {
 
 
 class OpenCodeGoApiClient:
-    """Thin async client for the two Zen Go endpoints."""
+    """Thin async client for the two Go inference endpoints."""
 
     def __init__(self, session: aiohttp.ClientSession) -> None:
         self._session = session
