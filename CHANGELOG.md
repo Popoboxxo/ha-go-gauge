@@ -23,6 +23,13 @@ the account-entity-collision repair issues.
   collision losers are disabled and the winner is active — previously they
   stayed in Repairs forever even after the adoption was effectively complete.
   (Fixes #48)
+- Free-model detection (`free_models` attribute on the model catalog sensor)
+  now derives "free" from the live API's per-model pricing
+  (`cost.text.{input,output}.price == 0`) instead of only a static,
+  hand-maintained table — that table had exactly one free-flagged entry
+  (`ox-alpha-free`), which the live catalog no longer lists, so
+  `free_models` stayed structurally empty regardless of what was actually
+  free. Non-live (historical) models still fall back to the static table.
 
 ### 💥 Breaking changes
 
