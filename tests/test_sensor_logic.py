@@ -77,6 +77,9 @@ class _FakeCoordinator:
     auto_fetch = True
     base_interval_minutes = 60
     last_models_outcome = "ok"
+    last_models_attempt = None
+    last_models_ok = None
+    last_usage_fetch = None
 
     def __init__(self, data):
         self.data = data
@@ -157,6 +160,9 @@ class TestModelCatalogSensor:
         assert attrs["account_fetch_interval_minutes"] == 60
         assert attrs["account_models_refresh_minutes"] == 60
         assert attrs["account_last_models_outcome"] == "ok"
+        # Fix #47: no last_models_attempt/last_models_ok set on the fake -> None
+        assert attrs["account_last_models_attempt"] is None
+        assert attrs["account_last_models_ok"] is None
         # Account entities stay available: None is the "unknown" state.
         assert cat.available is True
 
@@ -247,6 +253,51 @@ class TestModelCatalogSensor:
         cat.coordinator = coordinator
 
         assert cat.native_value is None
+
+    def test_catalog_last_models_fetch_attributes(self):
+        """Fix #47: account_last_models_attempt/_ok surface the fetch timestamps."""
+        coordinator = _FakeCoordinator({
+            "models_block": {
+                "models": [],
+                "models_updated_at": datetime(2026, 11, 22, 8, 0, 0),
+            },
+            "workspaces": [],
+        })
+        coordinator.last_models_attempt = datetime(2026, 11, 22, 9, 0, 0)
+        coordinator.last_models_ok = datetime(2026, 11, 22, 8, 0, 0)
+        entry = _FakeEntry()
+        cat = sensor.ModelCatalogSensor(coordinator, entry)
+        cat.coordinator = coordinator
+
+        attrs = cat.extra_state_attributes
+        assert attrs["account_last_models_attempt"] == "2026-11-22T09:00:00"
+        assert attrs["account_last_models_ok"] == "2026-11-22T08:00:00"
+
+    def test_catalog_last_models_fetch_invalidates_cache(self):
+        """Fix #47: a new last_models_attempt (no catalog change) must bust the cache.
+
+        Otherwise a forced refresh via the account refresh button leaves the
+        attributes stale - the same bug #47 describes, one layer deeper.
+        """
+        coordinator = _FakeCoordinator({
+            "models_block": {
+                "models": [],
+                "models_updated_at": datetime(2026, 11, 22, 8, 0, 0),
+            },
+            "workspaces": [],
+        })
+        coordinator.last_models_attempt = datetime(2026, 11, 22, 9, 0, 0)
+        entry = _FakeEntry()
+        cat = sensor.ModelCatalogSensor(coordinator, entry)
+        cat.coordinator = coordinator
+
+        first = cat.extra_state_attributes
+        assert first["account_last_models_attempt"] == "2026-11-22T09:00:00"
+
+        # Simulate a second, later refresh attempt without any catalog change.
+        coordinator.last_models_attempt = datetime(2026, 11, 22, 9, 30, 0)
+        second = cat.extra_state_attributes
+        assert second["account_last_models_attempt"] == "2026-11-22T09:30:00"
 
 
 class TestUsagePercentSensor:
@@ -377,6 +428,25 @@ class TestUsagePercentSensor:
         assert attrs["status"] == "ok"
         assert attrs["note"] == "All systems operational"
         assert attrs["resets_at_iso"] == "2026-10-01T12:30:00"
+        # Fix #47: no last_usage_fetch set on the fake coordinator -> None
+        assert attrs["last_usage_fetch"] is None
+
+    def test_usage_percent_last_fetch_attribute(self):
+        """Fix #47: last_usage_fetch surfaces the coordinator's fetch timestamp."""
+        coordinator = _FakeCoordinator({
+            "workspaces": [
+                {"key": "ws1", "status": "ok", "windows": {"month": {"percent": 1.0}}}
+            ],
+            "models_block": {},
+        })
+        coordinator.last_usage_fetch = datetime(2026, 11, 22, 9, 0, 0)
+        entry = _FakeEntry()
+        pct = sensor.UsagePercentSensor(
+            coordinator, entry, key="ws1", win="month", label="Monthly"
+        )
+        pct.coordinator = coordinator
+
+        assert pct.extra_state_attributes["last_usage_fetch"] == "2026-11-22T09:00:00"
 
     def test_usage_percent_integer_value(self):
         """native_value handles integer percent values (not just float)."""
