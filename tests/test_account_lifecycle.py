@@ -68,6 +68,9 @@ _load("go_gauge.api", str(BASE / "api.py"))
 _load("go_gauge.catalog", str(BASE / "catalog.py"))
 account_logic = _load("go_gauge.account_logic", str(BASE / "account_logic.py"))
 _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
+account_coordinator = _load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
+_load("go_gauge.account_reachability", str(BASE / "account_reachability.py"))
+account_adoption = _load("go_gauge.account_adoption", str(BASE / "account_adoption.py"))
 account = _load("go_gauge.account", str(BASE / "account.py"))
 
 # The four non-per-kind adoption issue ids (plan §4.4/§4.7).
@@ -141,8 +144,8 @@ def adoption_registries():
     device = conftest.install_device_registry_stub(conftest.FakeDeviceRegistry(entity))
     # Re-point the module references ``account.py`` bound at import time at the
     # currently installed fake modules (other test files replace them).
-    account.er = sys.modules["homeassistant.helpers.entity_registry"]
-    account.dr = sys.modules["homeassistant.helpers.device_registry"]
+    account_adoption.er = sys.modules["homeassistant.helpers.entity_registry"]
+    account_adoption.dr = sys.modules["homeassistant.helpers.device_registry"]
     conftest.reset_write_log()
     return entity, device
 
@@ -166,9 +169,9 @@ def _install_client(monkeypatch, *, error: Exception | None = None) -> MagicMock
         client.fetch_models = AsyncMock(side_effect=error)
     else:
         client.fetch_models = AsyncMock(return_value=["glm-5", "glm-5-free"])
-    monkeypatch.setattr(account, "OpenCodeGoApiClient", lambda _session: client)
+    monkeypatch.setattr(account_coordinator, "OpenCodeGoApiClient", lambda _session: client)
     monkeypatch.setattr(
-        account, "async_get_clientsession", lambda _hass: MagicMock()
+        account_coordinator, "async_get_clientsession", lambda _hass: MagicMock()
     )
     return client
 
@@ -576,9 +579,9 @@ def _register_coordinator(hass, entry, *, slow_fetch: bool = False, monkeypatch=
     client = MagicMock()
     client.fetch_models = _slow if slow_fetch else AsyncMock(return_value=["glm-5"])
     if monkeypatch is not None:
-        monkeypatch.setattr(account, "OpenCodeGoApiClient", lambda _session: client)
+        monkeypatch.setattr(account_coordinator, "OpenCodeGoApiClient", lambda _session: client)
         monkeypatch.setattr(
-            account, "async_get_clientsession", lambda _hass: MagicMock()
+            account_coordinator, "async_get_clientsession", lambda _hass: MagicMock()
         )
 
     coordinator = account.AccountCoordinator(hass, entry)

@@ -103,6 +103,9 @@ _load("go_gauge.catalog", str(BASE / "catalog.py"))
 account_logic = _load("go_gauge.account_logic", str(BASE / "account_logic.py"))
 _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
 _load("go_gauge.entity", str(BASE / "entity.py"))
+account_coordinator = _load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
+_load("go_gauge.account_reachability", str(BASE / "account_reachability.py"))
+account_adoption = _load("go_gauge.account_adoption", str(BASE / "account_adoption.py"))
 account = _load("go_gauge.account", str(BASE / "account.py"))
 sensor = _load("go_gauge.sensor", str(BASE / "sensor.py"))
 binary_sensor = _load("go_gauge.binary_sensor", str(BASE / "binary_sensor.py"))
@@ -248,9 +251,9 @@ def _install_client(monkeypatch) -> MagicMock:
     """Inject a fake API client - no HTTP leaves the process."""
     client = MagicMock()
     client.fetch_models = AsyncMock(return_value=["glm-5", "glm-5-free"])
-    monkeypatch.setattr(account, "OpenCodeGoApiClient", lambda _session: client)
+    monkeypatch.setattr(account_coordinator, "OpenCodeGoApiClient", lambda _session: client)
     monkeypatch.setattr(
-        account, "async_get_clientsession", lambda _hass: MagicMock()
+        account_coordinator, "async_get_clientsession", lambda _hass: MagicMock()
     )
     return client
 
@@ -487,9 +490,9 @@ async def test_account_setup_leaves_exactly_one_entry_per_kind(monkeypatch):
         config_entries={WORKSPACE_ENTRY_ID},
     ))
     conftest.install_issue_registry_stub()
-    account.er = sys.modules["homeassistant.helpers.entity_registry"]
-    account.dr = sys.modules["homeassistant.helpers.device_registry"]
-    account.ir = sys.modules["homeassistant.helpers.issue_registry"]
+    account_adoption.er = sys.modules["homeassistant.helpers.entity_registry"]
+    account_adoption.dr = sys.modules["homeassistant.helpers.device_registry"]
+    account_adoption.ir = sys.modules["homeassistant.helpers.issue_registry"]
     _seed_legacy_catalog(entity_registry)
 
     entry = _FakeEntry()
@@ -515,7 +518,7 @@ async def test_account_setup_leaves_exactly_one_entry_per_kind(monkeypatch):
 def test_legacy_model_settings_removed_and_idempotent():
     """[PLAN2-E4] Legacy workspace controls removed; ``account_*`` survives."""
     entity_registry = conftest.install_entity_registry_stub()
-    account.er = sys.modules["homeassistant.helpers.entity_registry"]
+    account_adoption.er = sys.modules["homeassistant.helpers.entity_registry"]
     hass = _Hass()
 
     legacy = [
@@ -567,7 +570,7 @@ def test_legacy_model_settings_removed_with_real_ha_semantics():
     dead controls stayed behind on the live instance.
     """
     entity_registry = conftest.install_entity_registry_stub()
-    account.er = sys.modules["homeassistant.helpers.entity_registry"]
+    account_adoption.er = sys.modules["homeassistant.helpers.entity_registry"]
     hass = _Hass()
 
     legacy = [
@@ -622,9 +625,9 @@ async def test_adoption_reports_removed_settings_and_second_pass_removes_zero():
         config_entries={WORKSPACE_ENTRY_ID},
     ))
     conftest.install_issue_registry_stub()
-    account.er = sys.modules["homeassistant.helpers.entity_registry"]
-    account.dr = sys.modules["homeassistant.helpers.device_registry"]
-    account.ir = sys.modules["homeassistant.helpers.issue_registry"]
+    account_adoption.er = sys.modules["homeassistant.helpers.entity_registry"]
+    account_adoption.dr = sys.modules["homeassistant.helpers.device_registry"]
+    account_adoption.ir = sys.modules["homeassistant.helpers.issue_registry"]
     entity_registry.add(conftest.RegistryEntry(
         entity_id="switch.ws_auto_update_models",
         unique_id="ws_auto_update_models",

@@ -28,10 +28,11 @@ registry doubles there are stateful (``FakeEntityRegistry``,
 ``FakeDeviceRegistry``, ``FakeIssueRegistry``) and journal every write in
 ``WRITE_LOG`` for the cross-registry ordering assertion.
 
-``account.py`` binds ``er``/``dr``/``ir`` at import time, while a later-collected
-test module may replace those ``sys.modules`` entries with its own ``_Flexible``
-fake. The fixtures therefore re-point ``account.er``/``account.dr``/``account.ir``
-at the currently installed fake module before wiring a fresh registry into it -
+``account_adoption.py`` binds ``er``/``dr``/``ir`` at import time, while a
+later-collected test module may replace those ``sys.modules`` entries with its
+own ``_Flexible`` fake. The fixtures therefore re-point
+``account_adoption.er``/``account_adoption.dr``/``account_adoption.ir`` at the
+currently installed fake module before wiring a fresh registry into it -
 otherwise the per-test registry would never be reached.
 """
 from __future__ import annotations
@@ -77,6 +78,9 @@ _load("go_gauge.api", str(BASE / "api.py"))
 _load("go_gauge.catalog", str(BASE / "catalog.py"))
 account_logic = _load("go_gauge.account_logic", str(BASE / "account_logic.py"))
 _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
+account_coordinator = _load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
+_load("go_gauge.account_reachability", str(BASE / "account_reachability.py"))
+account_adoption = _load("go_gauge.account_adoption", str(BASE / "account_adoption.py"))
 account = _load("go_gauge.account", str(BASE / "account.py"))
 
 ACCOUNT_ENTRY_ID = "account-entry"
@@ -125,11 +129,11 @@ class _Registries:
             conftest.FakeDeviceRegistry(entity)
         )
         issue = conftest.install_issue_registry_stub()
-        # Re-point the module references ``account.py`` bound at import time at
-        # whatever object is registered NOW (see module docstring).
-        account.er = sys.modules["homeassistant.helpers.entity_registry"]
-        account.dr = sys.modules["homeassistant.helpers.device_registry"]
-        account.ir = sys.modules["homeassistant.helpers.issue_registry"]
+        # Re-point the module references ``account_adoption.py`` bound at import
+        # time at whatever object is registered NOW (see module docstring).
+        account_adoption.er = sys.modules["homeassistant.helpers.entity_registry"]
+        account_adoption.dr = sys.modules["homeassistant.helpers.device_registry"]
+        account_adoption.ir = sys.modules["homeassistant.helpers.issue_registry"]
         conftest.reset_write_log()
         self.hass = hass
         self.entity = entity
@@ -230,9 +234,9 @@ def _install_client(monkeypatch) -> MagicMock:
     """Inject a fake API client - the setup's first fetch must stay offline."""
     client = MagicMock()
     client.fetch_models = AsyncMock(return_value=["glm-5", "glm-5-free"])
-    monkeypatch.setattr(account, "OpenCodeGoApiClient", lambda _session: client)
+    monkeypatch.setattr(account_coordinator, "OpenCodeGoApiClient", lambda _session: client)
     monkeypatch.setattr(
-        account, "async_get_clientsession", lambda _hass: MagicMock()
+        account_coordinator, "async_get_clientsession", lambda _hass: MagicMock()
     )
     return client
 
@@ -788,7 +792,7 @@ async def test_device_move_never_falls_back_to_a_foreign_owned_device(
     registries.device.add(foreign_device)
     report = account.AdoptionReport()
 
-    account._move_account_device(
+    account_adoption._move_account_device(
         hass, _entry(), report, registries.device, {"dev-foreign"}
     )
 
@@ -823,7 +827,7 @@ async def test_device_move_falls_back_to_a_go_gauge_owned_device(hass, registrie
     registries.device.add(legacy_device)
     report = account.AdoptionReport()
 
-    account._move_account_device(
+    account_adoption._move_account_device(
         hass, _entry(), report, registries.device, {"dev-legacy"}
     )
 
@@ -1107,7 +1111,7 @@ def test_canonical_blocker_uses_ha_lookup_signature(registries):
         domain="sensor",
     ))
 
-    blocker = account._canonical_blocker(
+    blocker = account_adoption._canonical_blocker(
         registries.entity, "sensor", "account_model_catalog", winner
     )
 
@@ -1121,7 +1125,7 @@ def test_canonical_blocker_uses_ha_lookup_signature(registries):
         platform=const.DOMAIN,
         domain="sensor",
     ))
-    blocker = account._canonical_blocker(
+    blocker = account_adoption._canonical_blocker(
         registries.entity, "sensor", "account_model_catalog", winner
     )
     assert blocker is holder
@@ -1155,7 +1159,7 @@ def test_canonical_device_uses_registry_identifier_lookup():
         def __getattr__(self, name: str):
             raise AssertionError(f"unexpected registry access: {name}")
 
-    found = account._canonical_device(_SpyRegistry())
+    found = account_adoption._canonical_device(_SpyRegistry())
 
     assert found is not None
     assert found.id == "aaa", "the smallest id must win deterministically"
@@ -1166,7 +1170,7 @@ def test_canonical_device_uses_registry_identifier_lookup():
         def async_get_devices(self, *, identifiers=None):
             return []
 
-    assert account._canonical_device(_EmptyRegistry()) is None
+    assert account_adoption._canonical_device(_EmptyRegistry()) is None
 
 
 def test_canonical_device_falls_back_to_registry_entries():
@@ -1198,13 +1202,13 @@ def test_canonical_device_falls_back_to_registry_entries():
         ),
     }
 
-    found = account._canonical_device(_LegacyMappingRegistry(devices))
+    found = account_adoption._canonical_device(_LegacyMappingRegistry(devices))
 
     assert found is not None
     assert found.id == "aaa", "the smallest id must win deterministically"
-    assert account._canonical_device(_LegacyMappingRegistry({})) is None
+    assert account_adoption._canonical_device(_LegacyMappingRegistry({})) is None
     # A registry without the expected surface stays a normal "no device".
-    assert account._canonical_device(object()) is None
+    assert account_adoption._canonical_device(object()) is None
 
 
 def test_canonical_device_falls_back_on_older_signature():
@@ -1230,7 +1234,7 @@ def test_canonical_device_falls_back_on_older_signature():
         def __getattr__(self, name: str):
             raise AssertionError(f"deprecated/unsupported access: {name}")
 
-    assert account._canonical_device(_WrongSignatureRegistry()) is device
+    assert account_adoption._canonical_device(_WrongSignatureRegistry()) is device
 
 
 def test_device_registry_without_collection_reads_as_empty():
@@ -1258,10 +1262,10 @@ def test_device_registry_without_collection_reads_as_empty():
 
     registry = _PreLoadRegistry()
 
-    assert account._device_entries(registry) == []
-    assert account._canonical_device(registry) is None
+    assert account_adoption._device_entries(registry) == []
+    assert account_adoption._canonical_device(registry) is None
     assert (
-        account._device_has_dependencies(
+        account_adoption._device_has_dependencies(
             _EmptyEntityRegistry(), registry, "dev-x"
         )
         is False
@@ -1280,10 +1284,10 @@ def test_device_has_dependencies_covers_child_devices(registries):
         conftest.DeviceEntry(id="dev-child", via_device_id="dev-parent")
     )
 
-    assert account._device_has_dependencies(
+    assert account_adoption._device_has_dependencies(
         registries.entity, registries.device, "dev-parent"
     ) is True
-    assert account._device_has_dependencies(
+    assert account_adoption._device_has_dependencies(
         registries.entity, registries.device, "dev-child"
     ) is False
     assert registries.device.remove_calls == []
@@ -1366,18 +1370,18 @@ async def test_production_never_reads_the_deprecated_devices_mapping(
     strict = _StrictDeviceRegistry(registries.device)
 
     # 1. primary lookup path
-    canonical = account._canonical_device(strict)
+    canonical = account_adoption._canonical_device(strict)
     assert canonical is not None
     assert canonical.id == CANONICAL_DEVICE_ID
 
     # 2. child-device check (enumeration through the devices collection)
-    assert account._device_has_dependencies(
+    assert account_adoption._device_has_dependencies(
         registries.entity, strict, "dev-duplicate"
     ) is True
 
     # 3. end-to-end: the non-empty duplicate stays, nothing failed
     conftest.install_device_registry_stub(strict)  # type: ignore[arg-type]
-    account.dr = sys.modules["homeassistant.helpers.device_registry"]
+    account_adoption.dr = sys.modules["homeassistant.helpers.device_registry"]
 
     report = await account.async_adopt_account_entities(hass, _entry())
 
@@ -1398,7 +1402,7 @@ async def test_production_never_reads_the_deprecated_devices_mapping(
     )
     fallback_report = account.AdoptionReport()
 
-    account._move_account_device(
+    account_adoption._move_account_device(
         hass,
         _entry(),
         fallback_report,

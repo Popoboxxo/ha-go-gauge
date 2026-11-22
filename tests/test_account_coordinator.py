@@ -59,6 +59,9 @@ const = _load("go_gauge.const", str(BASE / "const.py"))
 _load("go_gauge.api", str(BASE / "api.py"))
 _load("go_gauge.catalog", str(BASE / "catalog.py"))
 coordinator_module = _load("go_gauge.coordinator", str(BASE / "coordinator.py"))
+account_coordinator = _load("go_gauge.account_coordinator", str(BASE / "account_coordinator.py"))
+_load("go_gauge.account_reachability", str(BASE / "account_reachability.py"))
+_load("go_gauge.account_adoption", str(BASE / "account_adoption.py"))
 account = _load("go_gauge.account", str(BASE / "account.py"))
 
 SNAPSHOT_KEYS = {
@@ -100,7 +103,7 @@ def _make_coordinator(
     hass.data = {}
     # ``async_get_clientsession`` is HA machinery (the fake module hands out a
     # no-arg class) - the coordinator only needs *a* session object.
-    with patch.object(account, "async_get_clientsession", lambda _hass: MagicMock()):
+    with patch.object(account_coordinator, "async_get_clientsession", lambda _hass: MagicMock()):
         coordinator = account.AccountCoordinator(hass, entry)
     client = MagicMock()
     client.fetch_models = AsyncMock(return_value=["glm-5"] if models is None else models)
